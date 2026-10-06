@@ -1,0 +1,4 @@
+mes-demo-app/target/
+lasttest/__pycache__/
+lasttest/steuerung/frontend/node_modules/
+lasttest/steuerung/frontend/dist/

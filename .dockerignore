@@ -1,0 +1,8 @@
+mes-demo-app/target
+lasttest
+grafana
+prometheus
+haproxy
+oracle
+**/.idea
+.env.bak
