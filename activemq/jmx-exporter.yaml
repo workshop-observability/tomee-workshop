@@ -1,0 +1,38 @@
+# JMX Exporter (Java-Agent 1.0.1) für ActiveMQ Classic 6.1.7
+#
+# Die entscheidenden Werte einer Queue stehen nur im Broker: wie viele Nachrichten
+# warten, wie viele Konsumenten hängen dran, wie schnell kommen sie rein und raus.
+# TomEE kennt davon nichts – dort sieht man nur die MDB-Instanzen.
+#
+#   org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=MES.EINGANG
+#   → activemq_queue_queuesize{queue="MES.EINGANG"}
+
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+includeObjectNames:
+  - "org.apache.activemq:type=Broker,brokerName=*"
+  - "org.apache.activemq:type=Broker,brokerName=*,destinationType=Queue,destinationName=*"
+
+rules:
+  # ─── je Queue ──────────────────────────────────────────────────────────────
+  # QueueSize: Nachrichten, die noch nicht bestätigt sind (wartend + in Verarbeitung)
+  # InFlightCount: an einen Konsumenten ausgeliefert, noch nicht bestätigt
+  # AverageEnqueueTime / MaxEnqueueTime: Verweildauer der bereits abgeholten Nachrichten (ms)
+  - pattern: 'org.apache.activemq<type=Broker, brokerName=([^,]+), destinationType=Queue, destinationName=([^,]+)><>(QueueSize|ConsumerCount|ProducerCount|InFlightCount|MemoryPercentUsage|AverageEnqueueTime|MaxEnqueueTime)(?:$|:)'
+    name: activemq_queue_$3
+    labels:
+      queue: "$2"
+    type: GAUGE
+  # Zähler seit Broker-Start
+  - pattern: 'org.apache.activemq<type=Broker, brokerName=([^,]+), destinationType=Queue, destinationName=([^,]+)><>(EnqueueCount|DequeueCount|ExpiredCount|DispatchCount)(?:$|:)'
+    name: activemq_queue_$3_total
+    labels:
+      queue: "$2"
+    type: COUNTER
+
+  # ─── Broker gesamt ─────────────────────────────────────────────────────────
+  # MemoryPercentUsage: ab 100 % bremst der Broker die Sender (Producer Flow Control)
+  - pattern: 'org.apache.activemq<type=Broker, brokerName=([^,]+)><>(MemoryPercentUsage|StorePercentUsage|TempPercentUsage|CurrentConnectionsCount|TotalConsumerCount|TotalProducerCount|TotalMessageCount)(?:$|:)'
+    name: activemq_broker_$2
+    type: GAUGE

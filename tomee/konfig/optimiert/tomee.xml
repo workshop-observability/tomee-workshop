@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OPTIMIERTE VARIANTE für den Vorher/Nachher-Vergleich im Workshop.
+  Basis ist konfig/kunde/tomee.xml. Jede Abweichung ist mit TUNING markiert
+  und nennt den Kundenwert. Alle Werte sind STARTWERTE, die gegen eine Baseline
+  aus dem Produktivbetrieb geprüft werden müssen.
+
+  Leitidee: Aus stummem Warten wird ein schneller, zählbarer Fehler.
+-->
+<tomee>
+
+	<!-- TUNING: Kunde Core = Max = 250. 250 fest gebundene Threads auf 4 Kernen sind nur sinnvoll,
+	     wenn fast alle davon auf I/O warten. 50 reicht als Startwert, die Queue fängt Spitzen ab. -->
+	<Resource id="GeneralThreadPool" type="ManagedExecutorService">
+		Core = 50
+		Max = 50
+		KeepAlive = 60 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+
+	<!-- TUNING: Kunde 14400 s (4 h). Kundenaussage: "länger als eine Stunde ist eh ein Problem".
+	     15 Minuten als Obergrenze; einzelne lange Jobs setzen ihren Timeout gezielt selbst. -->
+	<TransactionManager id="Default Transaction Manager">
+		defaultTransactionTimeoutSeconds 900
+	</TransactionManager>
+
+	<!-- TUNING: Kunde Core = 10, Max = 20, Queue = 1000. Max greift erst bei voller Queue –
+	     also praktisch nie. Core = Max macht das Verhalten vorhersagbar. -->
+	<Resource id="FileWatcher" type="ManagedExecutorService">
+		Core = 10
+		Max = 10
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+
+	<!-- Unverändert (Core = Max = 250). Jede offene Socket-Verbindung belegt einen Thread –
+	     die eigentliche Stellschraube ist ein Lese-Timeout im Socket-Server (MES_SOCKET_TIMEOUT_MS). -->
+	<Resource id="SocketHandler" type="ManagedExecutorService">
+		Core = 250
+		Max = 250
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+
+	<Resource id="MslHandling" type="ManagedExecutorService">
+		Core = 10
+		Max = 10
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+
+	<!-- TUNING: Kunde Core = 100, Max = 10000, Queue = 1000. Ein ThreadPoolExecutor legt Thread 101
+	     erst an, wenn die Queue voll ist – dann aber bis zu 10.000 Threads. Fester, kleiner Pool
+	     mit größerer Queue: Last staut sich sichtbar in der Queue statt im Scheduler des Betriebssystems. -->
+	<Resource id="BatchHandling" type="ManagedExecutorService">
+		Core = 16
+		Max = 16
+		KeepAlive = 5 s
+		Queue = 5000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+
+	<!-- TUNING: accessTimeout Kunde 30 s → 5 s. Ein Aufrufer, der 5 s keine Bean bekommt,
+	     bekommt sie auch in 30 s nicht – hält aber so lange einen HTTP-Thread fest. -->
+	<Container id="Default Stateless Container" type="STATELESS">
+		accessTimeout = 5 seconds
+		callbackThreads = 5
+		closeTimeout = 5 minutes
+		garbageCollection = false
+		idleTimeout = 0 minutes
+		maxAge = 0 hours
+		maxAgeOffset = -1
+		maxSize = 50
+		minSize = 0
+		replaceAged = true
+		replaceFlushed = false
+		strictPooling = true
+		sweepInterval = 5 minutes
+	</Container>
+
+	<!-- TUNING: accessTimeout Kunde 30 s → 5 s -->
+	<Container id="FileContentHandling Container" type="STATELESS">
+		accessTimeout = 5 seconds
+		callbackThreads = 5
+		closeTimeout = 5 minutes
+		garbageCollection = false
+		idleTimeout = 0 minutes
+		maxAge = 0 hours
+		maxAgeOffset = -1
+		maxSize = 100
+		minSize = 0
+		replaceAged = true
+		replaceFlushed = false
+		strictPooling = true
+		sweepInterval = 5 minutes
+	</Container>
+
+	<Resource id="MES_Connection" type="javax.sql.DataSource">
+		accessToUnderlyingConnectionAllowed = false
+		alternateUsernameAllowed = false
+		<!-- TUNING: ReadTimeout Kunde 60 min → 5 min. Kein Online-Request darf 60 min auf die DB warten.
+		     In der Demo der einzige Mechanismus, der eine Wartezeit auf LOCK TABLE beendet
+		     (ORA-18730 Socket read timed out) – FOR UPDATE WAIT und setQueryTimeout greifen dort nicht. -->
+		connectionProperties = oracle.jdbc.ReadTimeout=300000;
+		defaultAutoCommit = true
+		ignoreDefaultValues = false
+		<!-- TUNING: initialSize/minIdle Kunde 1/0 → 5/5: Verbindungsaufbau nicht im ersten Request -->
+		initialSize = 5
+		jdbcDriver = oracle.jdbc.OracleDriver
+		jdbcUrl = jdbc:oracle:thin:@//oracle-db:1521/FREEPDB1
+		jtaManaged = true
+		jmxEnabled = true
+		maxActive = 50
+		maxIdle = 50
+		<!-- TUNING: maxOpenPreparedStatements, poolPreparedStatements und poolSweeperEnabled entfernt –
+		     TomEE meldet sie beim Start als "unused property", sie wirken nicht. -->
+		<!-- TUNING: Kunde maxWaitTime = -1. Diesen Namen übernimmt TomEE 10.1.2 mit tomcat-jdbc NICHT –
+		     es gilt der Pool-Default 30 s (JMX: MaxWait = 30000). Wirksam ist der native Name maxWait (ms).
+		     Pool leer → nach 5 s ein zählbarer Fehler statt 30 s blockierter Threads. -->
+		maxWait = 5000
+		minEvictableIdleTime = 60000
+		minIdle = 5
+		numTestsPerEvictionRun = 3
+		password = mes_demo
+		passwordCipher = PlainText
+		<!-- TUNING: removeAbandonedTimeout Kunde 3600 s → 600 s, dazu logAbandoned für den Stacktrace
+		     des Verursachers. Der Pool-Cleaner läuft ohnehin (effektiv alle 5 s, hier 30 s). -->
+		removeAbandoned = true
+		removeAbandonedTimeout = 600
+		logAbandoned = true
+		<!-- TUNING: Kunde 0. Meldet Connections, die länger als 60 s gehalten werden, ohne sie zu schließen. -->
+		suspectTimeout = 60
+		testOnBorrow = true
+		testOnReturn = false
+		<!-- TUNING: Kunde false / -1. Ohne Eviction-Lauf werden weder tote noch verwaiste Connections gefunden. -->
+		testWhileIdle = true
+		<!-- TUNING: Kunde timeBetweenEvictionRuns = -1 – ebenfalls nicht übernommen (effektiv 5000 ms).
+		     Nativer Name: timeBetweenEvictionRunsMillis. -->
+		timeBetweenEvictionRunsMillis = 30000
+		userName = MES_LOCAL
+		validationQuery = SELECT 1 FROM DUAL
+		<!-- TUNING: neu. ResetAbandonedTimer: Aktivität setzt den Abandoned-Timer zurück (lange, aber aktive
+		     Batch-Connections werden nicht abgeräumt). SlowQueryReportJmx: langsame Statements als JMX-Notification. -->
+		jdbcInterceptors = org.apache.tomcat.jdbc.pool.interceptor.ResetAbandonedTimer;org.apache.tomcat.jdbc.pool.interceptor.SlowQueryReportJmx(threshold=5000)
+	</Resource>
+
+	<Resource id="Master_MES_Connection" type="javax.sql.DataSource">
+		accessToUnderlyingConnectionAllowed = false
+		alternateUsernameAllowed = false
+		connectionProperties = oracle.jdbc.ReadTimeout=300000;
+		defaultAutoCommit = true
+		ignoreDefaultValues = false
+		initialSize = 2
+		jdbcDriver = oracle.jdbc.OracleDriver
+		jdbcUrl = jdbc:oracle:thin:@//oracle-db:1521/FREEPDB1
+		jtaManaged = true
+		jmxEnabled = true
+		maxActive = 20
+		maxIdle = 20
+		maxWait = 5000
+		minEvictableIdleTime = 60000
+		minIdle = 2
+		numTestsPerEvictionRun = 3
+		password = mes_demo
+		passwordCipher = PlainText
+		<!-- TUNING: Kunde removeAbandoned = false (Timeout 1800 s ohne Wirkung) -->
+		removeAbandoned = true
+		removeAbandonedTimeout = 600
+		logAbandoned = true
+		suspectTimeout = 60
+		testOnBorrow = true
+		testOnReturn = false
+		testWhileIdle = true
+		timeBetweenEvictionRunsMillis = 30000
+		userName = MES_MASTER
+		validationQuery = SELECT 1 FROM DUAL
+		jdbcInterceptors = org.apache.tomcat.jdbc.pool.interceptor.ResetAbandonedTimer;org.apache.tomcat.jdbc.pool.interceptor.SlowQueryReportJmx(threshold=5000)
+	</Resource>
+
+</tomee>

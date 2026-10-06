@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ordnet Beans einem Container aus tomee.xml zu. Ohne Eintrag landen Stateless
+  Beans im "Default Stateless Container" (maxSize 50).
+-->
+<openejb-jar xmlns="http://www.openejb.org/openejb-jar/1.1">
+    <ejb-deployment ejb-name="DateiInhaltVerarbeitung" deployment-id="DateiInhaltVerarbeitung"
+                    container-id="FileContentHandling Container"/>
+</openejb-jar>

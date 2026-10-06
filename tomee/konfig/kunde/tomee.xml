@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DEMO-KOPIE von resosurcen-vom-kunden/tomee.xml (Stand 08.09.2026).
+  Unverändert bis auf die mit DEMO-ÄNDERUNG markierten Zeilen:
+    jdbcUrl, userName und password beider DataSources.
+  Alle Pool-, Executor-, Container- und Transaktionswerte entsprechen dem Kundensystem.
+-->
+<tomee>
+  	<!-- see http://tomee.apache.org/containers-and-resources.html -->
+  	
+  	<!-- activate next line to be able to deploy applications in apps -->
+  	<!-- <Deployments dir="apps" /> -->
+
+  	<!-- Allgemein -->
+	<Resource id="GeneralThreadPool" type="ManagedExecutorService">
+		Core = 250
+		Max = 250
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+			
+	<!--
+	Fehlermeldungen beim Transaktionstimeout:
+	Meldung 1: java.lang.Exception: Transaction has timed out
+	Meldung 2: Caused by: org.apache.openejb.core.transaction.TransactionRolledbackException: Transaction was rolled back, presumably because setRollbackOnly was called during a synchronization
+	-->
+	<TransactionManager id="Default Transaction Manager">
+		defaultTransactionTimeoutSeconds 14400
+	</TransactionManager> 
+
+  	<!-- Christian -->
+	<Resource id="FileWatcher" type="ManagedExecutorService">
+		Core = 10
+		Max = 20
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+	<Resource id="SocketHandler" type="ManagedExecutorService">
+		Core = 250
+		Max = 250
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+  
+  	<!-- Markus -->
+  	<Resource id="MslHandling" type="ManagedExecutorService">
+		Core = 10
+		Max = 10
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+	<Resource id="BatchHandling" type="ManagedExecutorService">
+		Core = 100
+		Max = 10000
+		KeepAlive = 5 s
+		Queue = 1000
+		ThreadFactory = org.apache.openejb.threads.impl.ManagedThreadFactoryImpl
+		Lazy = true
+	</Resource>
+	
+	<Container id="Default Stateless Container" type="STATELESS">
+		accessTimeout = 30 seconds
+		callbackThreads = 5
+		closeTimeout = 5 minutes
+		garbageCollection = false
+		idleTimeout = 0 minutes
+		maxAge = 0 hours
+		maxAgeOffset = -1
+		maxSize = 50
+		minSize = 0
+		replaceAged = true
+		replaceFlushed = false
+		strictPooling = true
+		sweepInterval = 5 minutes
+	</Container>
+	
+	<Container id="FileContentHandling Container" type="STATELESS">
+		accessTimeout = 30 seconds
+		callbackThreads = 5
+		closeTimeout = 5 minutes
+		garbageCollection = false
+		idleTimeout = 0 minutes
+		maxAge = 0 hours
+		maxAgeOffset = -1
+		maxSize = 100
+		minSize = 0
+		replaceAged = true
+		replaceFlushed = false
+		strictPooling = true
+		sweepInterval = 5 minutes
+	</Container>
+	
+	<!--
+	<Resource id="FileContentHandling" type="Stateless">
+		PoolSize = 10000
+	</Resource>
+	-->
+	
+	<Resource id="MES_Connection" type="javax.sql.DataSource">
+		accessToUnderlyingConnectionAllowed = false
+		alternateUsernameAllowed = false
+		<!-- 
+		connectionProperties: 
+		Angabe: connectionProperties = oracle.jdbc.ReadTimeout=10000;
+		WICHTIG: Mit Klammern connectionProperties = [oracle.jdbc.ReadTimeout=10000;] funktioniert es NICHT. Der Stern machts auch nicht besser.
+		oracle.jdbc.ReadTimeout (Angabe in Millisekunden), für jdbc versions >= 10.1.0.5, vorher oracle.net.READ_TIMEOUT
+		wenn zu niedrig dann wird folgende Exception geworfen:
+		java.sql.SQLRecoverableException: I/O-Fehler: Socket read timed out
+		-->
+		connectionProperties = oracle.jdbc.ReadTimeout=3600000; <!-- 3600000 ms == 60 Minuten -->
+		defaultAutoCommit = true
+		<!--defaultReadOnly = -->
+		<!--definition = -->
+		ignoreDefaultValues = false
+		initialSize = 1
+		<!--initSQL = BEGIN DBMS_SESSION.SET_IDENTIFIER('USER_APPLICATIONSERVER'); END;-->
+		jdbcDriver = oracle.jdbc.OracleDriver
+		<!-- DEMO-ÄNDERUNG: jdbcUrl/userName/password zeigen auf den Oracle-Container der Demo (Kunde: Test-/Produktivsysteme) -->
+		jdbcUrl = jdbc:oracle:thin:@//oracle-db:1521/FREEPDB1
+		jtaManaged = true
+		jmxEnabled = true
+		maxActive = 50
+		maxIdle = 50
+		maxOpenPreparedStatements = 0
+		maxWaitTime = -1 millisecond
+		minEvictableIdleTime = 60000
+		minIdle = 0
+		numTestsPerEvictionRun = 3
+		password = mes_demo
+		passwordCipher = PlainText
+		poolPreparedStatements = false
+		poolSweeperEnabled = true
+		<!--serviceId = -->
+		removeAbandoned = true <!-- Wirft eine Socket is already closed Exception wenn einzelne Queries länger als z.B. 1800 Sekunden laufen. Lang laufende Queries werden nicht unterbrochen sondern die Exception wird erst geworfen wenn die Query komplett durchgelaufen ist (z.B. nach 1h), von daher sinnlos -->
+		removeAbandonedTimeout = 3600  <!-- 3600 Sekunden == 60 Minuten (Angabe in Sekunden, verantwortlich für die Exception: Socket is already closed);  Ch. auf 3600 gesetzt am 30.06.2025 (JiraId: Z200012-2113)   -->
+		suspectTimeout = 0
+		testOnBorrow = true
+		testOnReturn = false
+		testWhileIdle = false
+		timeBetweenEvictionRuns = -1 millisecond
+		userName = MES_LOCAL
+		validationQuery = SELECT 1 FROM DUAL
+		<!--LogSql = false --> <!-- Info: diese Option war nicht im Beispiel vorhanden, taucht aber in der Doku auf -->
+	</Resource>
+	
+	<Resource id="Master_MES_Connection" type="javax.sql.DataSource">
+		accessToUnderlyingConnectionAllowed = false
+		alternateUsernameAllowed = false
+		connectionProperties = oracle.jdbc.ReadTimeout=3600000; <!-- 3600000 ms == 60 Minuten -->
+		defaultAutoCommit = true
+		<!--defaultReadOnly = -->
+		<!--definition = -->
+		ignoreDefaultValues = false
+		initialSize = 0
+		jdbcDriver = oracle.jdbc.OracleDriver
+		<!-- DEMO-ÄNDERUNG: jdbcUrl/userName/password zeigen auf den Oracle-Container der Demo -->
+		jdbcUrl = jdbc:oracle:thin:@//oracle-db:1521/FREEPDB1
+		jtaManaged = true
+		jmxEnabled = true
+		maxActive = 20
+		maxIdle = 20
+		maxOpenPreparedStatements = 0
+		maxWaitTime = -1 millisecond
+		minEvictableIdleTime = 60000
+		minIdle = 0
+		numTestsPerEvictionRun = 3
+		password = mes_demo
+		passwordCipher = PlainText
+		poolPreparedStatements = false
+		poolSweeperEnabled = true
+		<!--serviceId = -->
+		removeAbandoned = false <!-- Wirft eine Socket is already closed Exception wenn einzelne Queries länger als z.B. 1800 Sekunden laufen. Lang laufende Queries werden nicht unterbrochen sondern die Exception wird erst geworfen wenn die Query komplett durchgelaufen ist (z.B. nach 1h), von daher sinnlos -->
+		removeAbandonedTimeout = 1800
+		suspectTimeout = 0
+		testOnBorrow = true
+		testOnReturn = false
+		testWhileIdle = false
+		timeBetweenEvictionRuns = -1 millisecond
+		userName = MES_MASTER
+		validationQuery = SELECT 1 FROM DUAL
+		<!--LogSql = false --> <!-- Info: diese Option war nicht im Beispiel vorhanden, taucht aber in der Doku auf -->
+	</Resource>
+
+</tomee>

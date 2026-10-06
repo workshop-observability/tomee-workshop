@@ -1,0 +1,35 @@
+# Alertmanager der MES-Demo
+#
+# Prometheus wertet die Regeln aus (prometheus/regeln.yml) und schickt feuernde
+# Alarme hierher. Der Alertmanager bündelt, entdoppelt und leitet weiter.
+#
+# Demo: an die Laststeuerung (http://<host>:8070 → „Benachrichtigungen“). Sie zeigt
+# jede Nachricht so an, wie sie in einem Teams-Kanal ankäme, und leitet sie weiter,
+# wenn TEAMS_WEBHOOK_URL in .env gesetzt ist.
+#
+# Kunde (Teams über einen Workflows-Webhook, seit Alertmanager 0.28 eingebaut):
+#
+#   receivers:
+#     - name: teams
+#       msteamsv2_configs:
+#         - webhook_url_file: /etc/alertmanager/teams_url
+#           send_resolved: true
+#
+# Die Office-365-Connectoren (msteams_configs) hat Microsoft abgeschaltet.
+
+route:
+  receiver: laststeuerung
+  # ein Alarm je Regel und Applikationsserver, nicht je Zeitreihe
+  group_by: [alertname, instance]
+  # erste Nachricht nach 10 s (Demo), weitere Änderungen der Gruppe frühestens nach 1 min
+  group_wait: 10s
+  group_interval: 1m
+  # hält ein Alarm an, wird er stündlich wiederholt
+  repeat_interval: 1h
+
+receivers:
+  - name: laststeuerung
+    webhook_configs:
+      - url: http://host.docker.internal:8070/api/alarme
+        send_resolved: true
+        max_alerts: 20

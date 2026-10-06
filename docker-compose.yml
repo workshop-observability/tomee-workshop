@@ -1,0 +1,395 @@
+# MES-Demo-Umgebung für den Workshop „Monitorability & Performance Tuning“
+#
+# Nachbildung des Kundenaufbaus auf einem Host:
+#   HAProxy → Core / FileProcessing / Singleton (TomEE Plume 10.1.2) → Oracle
+#   ActiveMQ-Broker, aus dem der Core Nachrichten holt (Message-Driven Bean)
+#   + Prometheus, Alertmanager, Grafana, cAdvisor, Laststeuerung (Szenarien S01–S19)
+#
+# Start:  ./start.sh            (Kundenkonfiguration)
+#         ./start.sh optimiert  (Tuning-Variante)
+#         ./start.sh kunde --facade   (zusätzlich Facade mit dem Heap/Limit-Fehler)
+#         ./start.sh kunde --core2    (zweiter Core hinter dem HAProxy, für S13)
+
+name: mes-demo
+
+x-tomee: &tomee
+  build:
+    context: .
+    dockerfile: tomee/Dockerfile
+  image: mes-demo-tomee:latest
+  depends_on:
+    oracle-db:
+      condition: service_healthy
+    activemq:
+      condition: service_started
+  networks: [mes]
+  # Schutz des Hosts beim Executor-Szenario (BatchHandling Max = 10000)
+  pids_limit: 4096
+  cpus: ${TOMEE_CPUS:-2}
+  # Nach einem Absturz oder OOM-Kill (S09, S14) automatisch neu starten
+  restart: on-failure
+
+x-tomee-env: &tomee-env
+  TZ: Europe/Berlin
+  KONFIG: ${KONFIG:-kunde}
+  TIMER_POOL_SIZE: ${TIMER_POOL_SIZE:-}
+  QUARTZ_THREADS: ${QUARTZ_THREADS:-5}
+  JAVA_OPTS_EXTRA: ${JAVA_OPTS_EXTRA:-}
+  TX_WARN_SEKUNDEN: ${TX_WARN_SEKUNDEN:-60}
+  # Broker für den TomEE-Default-JMS-Adapter (setenv.sh → conf/system.properties)
+  MES_JMS_URL: ${JMS_URL:-tcp://activemq:61616}
+  # Nur für S15 (Sitzungsgrenze per Oracle-Profil setzen): Admin der Demo-DB
+  MES_DBA_PASSWORD: oracle_demo
+
+services:
+
+  # ─── Applikationsserver ────────────────────────────────────────────────────
+  core:
+    <<: *tomee
+    container_name: mes-core
+    hostname: demo_ApplicationServerCore
+    environment:
+      <<: *tomee-env
+      MES_ROLLE: core
+      # holt Nachrichten aus der Queue MES.EINGANG (auf den anderen Rollen ist die MDB inaktiv)
+      MES_JMS_KONSUMENT: "true"
+      # wie beim Kunden, Heap an die Demo angepasst (Kunde: -Xms4096M -Xmx7168M bei -m 10g)
+      JAVA_OPTS: >-
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=9200
+        -Dcom.sun.management.jmxremote.rmi.port=9200
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Xms${CORE_XMS:-512m} -Xmx${CORE_XMX:-1024m}
+        -Djava.rmi.server.hostname=${REMOTE_HOST:-127.0.0.1}
+    mem_limit: ${CORE_MEM:-1500m}
+    ports:
+      - "8200:8080"
+      - "9200:9200"
+      - "8882:8888"
+    volumes:
+      - ./tomee/konfig/${KONFIG:-kunde}/tomee.xml:/opt/apache-tomee-plume-10.1.2/conf/tomee.xml:ro,z
+      - ./tomee/konfig/${KONFIG:-kunde}/server.xml:/opt/apache-tomee-plume-10.1.2/conf/server.xml:ro,z
+      - mes_log_core:/opt/apache-tomee-plume-10.1.2/logs
+
+  fileprocessing:
+    <<: *tomee
+    container_name: mes-fileprocessing
+    hostname: demo_ApplicationServerFileProcessing
+    environment:
+      <<: *tomee-env
+      MES_ROLLE: fileprocessing
+      MES_SOCKET_PORTS: "50000-50004"
+      MES_SOCKET_TIMEOUT_MS: ${SOCKET_TIMEOUT_MS:-0}
+      MES_DATA_DIR: /mnt/mes_data/eingang
+      # Kunde: -Xms5120M -Xmx8192M bei -m 12g
+      JAVA_OPTS: >-
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=9300
+        -Dcom.sun.management.jmxremote.rmi.port=9300
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Xms${FP_XMS:-512m} -Xmx${FP_XMX:-1024m}
+        -Djava.rmi.server.hostname=${REMOTE_HOST:-127.0.0.1}
+    mem_limit: ${FP_MEM:-1500m}
+    # Demo: bewusst niedriges FD-Limit, damit "440 von wie vielen?" sichtbar wird
+    ulimits:
+      nofile:
+        soft: ${FP_NOFILE:-4096}
+        hard: ${FP_NOFILE:-4096}
+    ports:
+      - "8300:8080"
+      - "9300:9300"
+      - "8883:8888"
+    volumes:
+      - ./tomee/konfig/${KONFIG:-kunde}/tomee.xml:/opt/apache-tomee-plume-10.1.2/conf/tomee.xml:ro,z
+      - ./tomee/konfig/${KONFIG:-kunde}/server.xml:/opt/apache-tomee-plume-10.1.2/conf/server.xml:ro,z
+      - mes_log_fileprocessing:/opt/apache-tomee-plume-10.1.2/logs
+      - mes_data_fileprocessing:/mnt/mes_data
+
+  singleton:
+    <<: *tomee
+    container_name: mes-singleton
+    hostname: demo_ApplicationServerSingleton
+    environment:
+      <<: *tomee-env
+      MES_ROLLE: singleton
+      # Lock-Überwachung über V$SESSION läuft nur hier – eine Aufgabe, die nur einmal laufen soll
+      MES_ORACLE_MONITOR: "true"
+      # Kunde: -Xms4048M -Xmx4500M bei -m 5000m → Heap = 90 % des Limits
+      JAVA_OPTS: >-
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=9100
+        -Dcom.sun.management.jmxremote.rmi.port=9100
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Xms${SINGLETON_XMS:-512m} -Xmx${SINGLETON_XMX:-1024m}
+        -Djava.rmi.server.hostname=${REMOTE_HOST:-127.0.0.1}
+    mem_limit: ${SINGLETON_MEM:-1150m}
+    ports:
+      - "8100:8080"
+      - "9100:9100"
+      - "8881:8888"
+    volumes:
+      - ./tomee/konfig/${KONFIG:-kunde}/tomee.xml:/opt/apache-tomee-plume-10.1.2/conf/tomee.xml:ro,z
+      - ./tomee/konfig/${KONFIG:-kunde}/server.xml:/opt/apache-tomee-plume-10.1.2/conf/server.xml:ro,z
+      - mes_log_singleton:/opt/apache-tomee-plume-10.1.2/logs
+
+  # Nur mit Profil "core2" (./start.sh --core2): zweiter Core wie Applikationsserver 2
+  # beim Kunden – für S13 (ein Server in Wartung, trägt der andere die Last?).
+  # Ohne das Profil führt der HAProxy core2 als nicht auflösbar (MAINT) und verteilt
+  # alles auf core – die übrigen Szenarien sind auf einen Core abgestimmt.
+  core2:
+    <<: *tomee
+    profiles: [core2]
+    container_name: mes-core2
+    hostname: demo_ApplicationServerCore2
+    environment:
+      <<: *tomee-env
+      MES_ROLLE: core
+      MES_JMS_KONSUMENT: "true"
+      JAVA_OPTS: >-
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=9201
+        -Dcom.sun.management.jmxremote.rmi.port=9201
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Xms${CORE_XMS:-512m} -Xmx${CORE_XMX:-1024m}
+        -Djava.rmi.server.hostname=${REMOTE_HOST:-127.0.0.1}
+    mem_limit: ${CORE_MEM:-1500m}
+    ports:
+      - "8201:8080"
+      - "9201:9201"
+      - "8885:8888"
+    volumes:
+      - ./tomee/konfig/${KONFIG:-kunde}/tomee.xml:/opt/apache-tomee-plume-10.1.2/conf/tomee.xml:ro,z
+      - ./tomee/konfig/${KONFIG:-kunde}/server.xml:/opt/apache-tomee-plume-10.1.2/conf/server.xml:ro,z
+      - mes_log_core2:/opt/apache-tomee-plume-10.1.2/logs
+
+  # Nur mit Profil "facade": übernimmt BEIDE Fehler aus dem docker run des Kunden –
+  # Heap-Max weit über dem Container-Limit und JMX-Port 9300 statt 9400.
+  facade:
+    <<: *tomee
+    profiles: [facade]
+    # nach einem OOM-Kill neu starten – so wird aus dem Kill eine sichtbare Neustart-Schleife
+    restart: on-failure
+    container_name: mes-facade
+    hostname: demo_ApplicationServerFacade
+    environment:
+      <<: *tomee-env
+      MES_ROLLE: facade
+      # Kunde: -Xms4096M -Xmx7168M bei -m 2000m (Faktor 3,6)
+      JAVA_OPTS: >-
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=9300
+        -Dcom.sun.management.jmxremote.rmi.port=9300
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Xms${FACADE_XMS:-256m} -Xmx${FACADE_XMX:-2500m}
+        -Djava.rmi.server.hostname=${REMOTE_HOST:-127.0.0.1}
+    mem_limit: ${FACADE_MEM:-700m}
+    ports:
+      - "8400:8080"
+      - "9400:9400"
+      - "8884:8888"
+    volumes:
+      - ./tomee/konfig/${KONFIG:-kunde}/tomee.xml:/opt/apache-tomee-plume-10.1.2/conf/tomee.xml:ro,z
+      - ./tomee/konfig/${KONFIG:-kunde}/server.xml:/opt/apache-tomee-plume-10.1.2/conf/server.xml:ro,z
+      - mes_log_facade:/opt/apache-tomee-plume-10.1.2/logs
+
+  # ─── Infrastruktur ─────────────────────────────────────────────────────────
+  oracle-db:
+    image: gvenzl/oracle-free:23-slim-faststart
+    container_name: mes-oracle
+    networks: [mes]
+    environment:
+      ORACLE_PASSWORD: oracle_demo
+    ports:
+      # für SQL-Werkzeuge (SQL Developer, DBeaver): FREEPDB1, User MES_MONITOR / mes_demo
+      - "1521:1521"
+    volumes:
+      - ./oracle/init:/container-entrypoint-initdb.d:ro,z
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  # ActiveMQ Classic – beim Kunden active_mq / ha_active_mq. Web-Konsole :8161/admin
+  # (admin / admin), JMX Exporter :8886/metrics. Die Kunden-Ports 5672/61613/61614
+  # werden nicht veröffentlicht; TomEE spricht OpenWire (61616) im Docker-Netz.
+  activemq:
+    build:
+      context: .
+      dockerfile: activemq/Dockerfile
+    image: mes-demo-activemq:latest
+    container_name: mes-activemq
+    networks: [mes]
+    restart: on-failure
+    environment:
+      TZ: Europe/Berlin
+      ACTIVEMQ_OPTS: >-
+        -Xms64M -Xmx${ACTIVEMQ_XMX:-256M}
+        -Djava.util.logging.config.file=logging.properties
+        -Djava.security.auth.login.config=/opt/apache-activemq/conf/login.config
+        -Djetty.host=0.0.0.0
+        -javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent.jar=8888:/opt/jmx_exporter/config.yaml
+    mem_limit: ${ACTIVEMQ_MEM:-512m}
+    ports:
+      - "8161:8161"
+      - "8886:8888"
+
+  haproxy:
+    image: haproxy:3.2
+    container_name: mes-haproxy
+    networks: [mes]
+    depends_on: [core, fileprocessing, singleton]
+    ports:
+      - "8090:8090"
+      - "8095:8095"
+      - "8989:8989"
+      - "50000-50004:50000-50004"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
+
+  # ─── Monitoring ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: mes-prometheus
+    networks: [mes]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+      # Für das Portal (:8080/prometheus/) ist hier nichts einzustellen: die
+      # Oberfläche von Prometheus 3 leitet ihr Pfad-Präfix aus der Adresse im
+      # Browser ab, nginx schneidet es vor der Weitergabe ab. Damit bleibt
+      # :9090 unverändert – Datenquelle, Selbst-Scrape, /targets, /-/reload.
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
+      - ./prometheus/regeln.yml:/etc/prometheus/regeln.yml:ro,z
+      - prometheus_daten:/prometheus
+
+  # Leitet feuernde Alarme weiter – in der Demo an die Laststeuerung (Anzeige
+  # „Benachrichtigungen“, von dort optional an einen Teams-Kanal, TEAMS_WEBHOOK_URL).
+  # Liefert selbst unter /alertmanager/ aus (Portal): http://<host>:9093/alertmanager/
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: mes-alertmanager
+    networks: [mes]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.route-prefix=/alertmanager/
+      - --web.external-url=http://${REMOTE_HOST:-localhost}:${PORTAL_PORT:-8080}/alertmanager/
+    # Die Laststeuerung läuft im Host-Netz und ist nur über den Host erreichbar
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro,z
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: mes-grafana
+    networks: [mes]
+    depends_on: [prometheus]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/mes-jmx.json
+      # Portal (:8080/grafana/): Grafana liefert selbst unter dem Unterpfad aus.
+      # Der Aufruf von :3000 landet per Weiterleitung ebenfalls dort.
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_DOMAIN: ${REMOTE_HOST:-localhost}
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s:${PORTAL_PORT:-8080}/grafana/"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro,z
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro,z
+      - grafana_daten:/var/lib/grafana
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.5
+    container_name: mes-cadvisor
+    networks: [mes]
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - --docker_only=true
+      # Portal (:8080/cadvisor/) – cAdvisor kennt nur absolute Pfade, deshalb
+      # baut es die Oberfläche gleich unter diesem Präfix auf. Direktaufruf
+      # dadurch: http://<host>:8085/cadvisor/
+      - --url_base_prefix=/cadvisor
+      - --housekeeping_interval=5s
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.project,com.docker.compose.service
+    ports:
+      - "8085:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  # ─── Laststeuerung ─────────────────────────────────────────────────────────
+  # Weboberfläche für lasttest/mes_last.py: Szenarien mit Parametern starten und
+  # stoppen, Ausgabe und Live-Status ansehen. http://<vm>:8070
+  laststeuerung:
+    build:
+      context: lasttest
+      dockerfile: steuerung/Dockerfile
+    image: mes-demo-laststeuerung:latest
+    container_name: mes-laststeuerung
+    # Host-Netz: erreicht die Demo über dieselben Ports wie mes_last.py auf der VM
+    # (localhost:8200, :8090, :8989, TCP :50000 …) – die Szenarien laufen unverändert.
+    network_mode: host
+    environment:
+      TZ: Europe/Berlin
+      MES_HOST: localhost
+      STEUERUNG_PORT: "8070"
+      # optional: Alarme zusätzlich an einen Teams-Kanal (Workflows-Webhook), siehe .env
+      TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL:-}
+    # Zeit zum Aufräumen: laufende Szenarien bekommen beim Stoppen SIGINT (wie Strg+C)
+    stop_grace_period: 50s
+
+  # ─── Portal ────────────────────────────────────────────────────────────────
+  # Ein Eingang für alle Weboberflächen: http://<host>:8080
+  #   /frontend/  Laststeuerung   /grafana/  /prometheus/  /haproxy  /cadvisor/
+  #   /core/ /fileprocessing/ /singleton/ /facade/ /lb/   /metriken/…
+  # Die Einzelports bleiben zusätzlich offen; Regeln in portal/nginx.conf.
+  portal:
+    image: nginx:1.29-alpine
+    container_name: mes-portal
+    networks: [mes]
+    depends_on: [core, fileprocessing, singleton, haproxy, prometheus, grafana, cadvisor, laststeuerung,
+                 activemq, alertmanager]
+    ports:
+      - "${PORTAL_PORT:-8080}:8080"
+    # Die Laststeuerung läuft im Host-Netz und ist nur über den Host erreichbar
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./portal/nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - ./portal/index.html:/usr/share/nginx/html/index.html:ro,z
+
+networks:
+  mes:
+
+volumes:
+  mes_log_core:
+  mes_log_core2:
+  mes_log_fileprocessing:
+  mes_log_singleton:
+  mes_log_facade:
+  mes_data_fileprocessing:
+  prometheus_daten:
+  grafana_daten:

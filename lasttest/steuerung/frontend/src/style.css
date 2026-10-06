@@ -1,0 +1,149 @@
+:root {
+  --bg: #f4f6f9;
+  --flaeche: #ffffff;
+  --flaeche-2: #eef1f5;
+  --rand: #d8dde5;
+  --text: #1c2430;
+  --text-2: #5b6778;
+  --akzent: #2f6fdb;
+  --akzent-text: #ffffff;
+  --gut: #1f9d55;
+  --warn: #c98a04;
+  --schlecht: #d14343;
+  --hinweis-bg: #fff6dd;
+  --hinweis-rand: #ecd48a;
+  --konsole-bg: #0f1520;
+  --konsole-text: #d5dde8;
+  --konsole-dim: #6f7d91;
+  --konsole-hinweis: #f2c14e;
+  --konsole-fehler: #ff7b72;
+  --konsole-kopf: #7fb4ff;
+  --radius: 8px;
+  --mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151c;
+    --flaeche: #181e27;
+    --flaeche-2: #212935;
+    --rand: #2e3746;
+    --text: #e3e8ef;
+    --text-2: #9aa6b8;
+    --akzent: #5b8ff0;
+    --hinweis-bg: #2e2715;
+    --hinweis-rand: #6b5a24;
+    --konsole-bg: #0b0f16;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--rand);
+  background: var(--flaeche);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--akzent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primaer {
+  background: var(--akzent);
+  border-color: var(--akzent);
+  color: var(--akzent-text);
+  font-weight: 600;
+}
+
+button.gefahr {
+  color: var(--schlecht);
+  border-color: color-mix(in srgb, var(--schlecht) 50%, var(--rand));
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--rand);
+  background: var(--flaeche);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid color-mix(in srgb, var(--akzent) 40%, transparent);
+  border-color: var(--akzent);
+}
+
+a {
+  color: var(--akzent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.karte {
+  background: var(--flaeche);
+  border: 1px solid var(--rand);
+  border-radius: var(--radius);
+}
+
+.punkt {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.punkt.laeuft {
+  background: var(--gut);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gut) 25%, transparent);
+}
+
+.punkt.raeumt {
+  background: var(--warn);
+}
+
+.punkt.aus {
+  background: var(--text-2);
+}
+
+.punkt.fehler {
+  background: var(--schlecht);
+}

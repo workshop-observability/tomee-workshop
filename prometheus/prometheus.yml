@@ -1,0 +1,94 @@
+global:
+  # Demo: 5 s, damit Effekte im Workshop sofort sichtbar sind.
+  # Produktiv sind 15–30 s üblich.
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - /etc/prometheus/regeln.yml
+
+# Feuernde Alarme an den Alertmanager (der liefert unter /alertmanager/ aus)
+alerting:
+  alertmanagers:
+    - path_prefix: /alertmanager
+      static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  # JMX Exporter in jedem TomEE-Container
+  - job_name: tomee
+    static_configs:
+      - targets: ['core:8888']
+        labels: {rolle: core}
+      - targets: ['fileprocessing:8888']
+        labels: {rolle: fileprocessing}
+      - targets: ['singleton:8888']
+        labels: {rolle: singleton}
+    relabel_configs:
+      - source_labels: [rolle]
+        target_label: instance
+
+  # Zweiter Core nur mit Profil "core2" (S13) – per DNS gefunden, sonst kein Ziel
+  - job_name: tomee-core2
+    dns_sd_configs:
+      - names: [core2]
+        type: A
+        port: 8888
+        refresh_interval: 10s
+    relabel_configs:
+      - target_label: instance
+        replacement: core2
+      - target_label: rolle
+        replacement: core2
+
+  # Facade läuft nur mit Profil "facade" – per DNS gefunden, sonst kein Ziel
+  - job_name: tomee-facade
+    dns_sd_configs:
+      - names: [facade]
+        type: A
+        port: 8888
+        refresh_interval: 10s
+    relabel_configs:
+      - target_label: instance
+        replacement: facade
+      - target_label: rolle
+        replacement: facade
+
+  # ActiveMQ-Broker: Queue-Tiefe, Konsumenten, Durchsatz (JMX Exporter im Broker)
+  - job_name: activemq
+    static_configs:
+      - targets: ['activemq:8888']
+        labels: {instance: activemq}
+
+  # Alertmanager selbst: gingen die Benachrichtigungen raus?
+  - job_name: alertmanager
+    metrics_path: /alertmanager/metrics
+    static_configs:
+      - targets: ['alertmanager:9093']
+        labels: {instance: alertmanager}
+
+  # HAProxy (eingebauter Prometheus-Exporter)
+  - job_name: haproxy
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['haproxy:8989']
+        labels: {instance: haproxy}
+
+  # Container-Sicht: Speicher gegen Limit, OOM-Kills, CPU-Drosselung
+  - job_name: cadvisor
+    # cAdvisor läuft mit --url_base_prefix=/cadvisor (Portal), dort liegt auch /metrics
+    metrics_path: /cadvisor/metrics
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels: {instance: cadvisor}
+    metric_relabel_configs:
+      # nur die Container des Demo-Stacks behalten
+      - source_labels: [container_label_com_docker_compose_project]
+        regex: mes-demo
+        action: keep
+      - source_labels: [container_label_com_docker_compose_service]
+        target_label: rolle
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

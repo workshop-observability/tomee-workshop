@@ -1,0 +1,320 @@
+# JMX Exporter (Java-Agent 1.0.1) für TomEE Plume 10.1.2
+#
+# Kuratierter Regelsatz: Es wird nur exportiert, was in der Kausalkette
+# DB-Sperre → JDBC-Pool → Bean-Pool → HTTP-Threads → Scheduler vorkommt,
+# plus JVM/Container-Grenzen. MBeans ohne passende Regel werden verworfen.
+#
+# Die JVM-Standardmetriken (jvm_memory_*, jvm_gc_*, jvm_threads_*,
+# jvm_buffer_pool_*, process_open_fds, process_max_fds …) liefert der Agent
+# zusätzlich von selbst.
+#
+# Metriknamen folgen den MBean-Attributen: aus
+#   mes.demo:type=JdbcZugriff,datasource=MES_Connection → AeltesteAusleiheSekunden
+# wird
+#   mes_jdbc_aeltesteausleihesekunden{datasource="MES_Connection"}
+
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+# Nur diese MBeans werden überhaupt gelesen (spart Zeit beim Scrape;
+# z. B. die Quartz-MBean liefert große TabularData, die wir nicht brauchen).
+includeObjectNames:
+  - "Catalina:type=ThreadPool,*"
+  - "Catalina:type=GlobalRequestProcessor,*"
+  - "Catalina:type=Executor,*"
+  - "Catalina:type=Manager,*"
+  - "openejb.management:ObjectType=datasources,*"
+  - "openejb.management:j2eeType=Pool,*"
+  - "openejb.management:j2eeType=Invocations,*"
+  - "openejb.management:j2eeType=Resource,*"
+  - "openejb.management:j2eeType=TransactionManager"
+  - "openejb.management:j2eeType=Instances,*"
+  - "openejb.management:j2eeType=ConnectionFactory,*"
+  - "openejb.management:j2eeType=ResourceAdapter,*"
+  - "quartz:type=QuartzScheduler,*"
+  - "java.lang:type=OperatingSystem"
+  - "mes.demo:*"
+
+# Je ausgeliehener Connection legt tomcat-jdbc eine eigene MBean an
+# (…,DataSource=MES_Connection,connections=PooledConnection[n]). Ihre Getter
+# warten auf die Connection selbst – hängt diese in Oracle an einer Sperre,
+# blockiert der ganze Scrape (gemessen bis 20 s, Prometheus-Timeout, Lücke im
+# Dashboard genau in S01). Die Regeln unten verwerfen sie ohnehin.
+excludeObjectNames:
+  - "openejb.management:ObjectType=datasources,DataSource=*,connections=*"
+
+rules:
+  # ─── Tomcat: Connector-Threads und Verbindungen ────────────────────────────
+  # MBean Catalina:type=ThreadPool,name="http-nio-8080"
+  - pattern: 'Catalina<type=ThreadPool, name="(.+)"><>(currentThreadsBusy|currentThreadCount|maxThreads|connectionCount|maxConnections|acceptCount|keepAliveCount)(?:$|:)'
+    name: tomcat_threadpool_$2
+    labels:
+      connector: "$1"
+    type: GAUGE
+
+  # MBean Catalina:type=GlobalRequestProcessor,name="http-nio-8080" – alles Zähler seit Start
+  - pattern: 'Catalina<type=GlobalRequestProcessor, name="(.+)"><>requestCount(?:$|:)'
+    name: tomcat_requests_total
+    labels:
+      connector: "$1"
+    type: COUNTER
+  - pattern: 'Catalina<type=GlobalRequestProcessor, name="(.+)"><>errorCount(?:$|:)'
+    name: tomcat_errors_total
+    labels:
+      connector: "$1"
+    type: COUNTER
+  - pattern: 'Catalina<type=GlobalRequestProcessor, name="(.+)"><>processingTime(?:$|:)'
+    name: tomcat_processing_time_ms_total
+    labels:
+      connector: "$1"
+    type: COUNTER
+  - pattern: 'Catalina<type=GlobalRequestProcessor, name="(.+)"><>(bytesSent|bytesReceived)(?:$|:)'
+    name: tomcat_$2_total
+    labels:
+      connector: "$1"
+    type: COUNTER
+  - pattern: 'Catalina<type=GlobalRequestProcessor, name="(.+)"><>maxTime(?:$|:)'
+    name: tomcat_request_max_time_ms
+    labels:
+      connector: "$1"
+    type: GAUGE
+
+  # MBean Catalina:type=Executor,name=tomcatThreadPool – nur wenn in server.xml ein Executor aktiv ist
+  - pattern: 'Catalina<type=Executor, name=(.+)><>(activeCount|poolSize|maxThreads|queueSize|largestPoolSize)(?:$|:)'
+    name: tomcat_executor_$2
+    labels:
+      executor: "$1"
+    type: GAUGE
+  - pattern: 'Catalina<type=Executor, name=(.+)><>completedTaskCount(?:$|:)'
+    name: tomcat_executor_completed_total
+    labels:
+      executor: "$1"
+    type: COUNTER
+
+  # MBean Catalina:type=Manager,host=localhost,context=/mes – HTTP-Sessions
+  - pattern: 'Catalina<type=Manager, host=(.+), context=(.+)><>(activeSessions|maxActive|maxActiveSessions)(?:$|:)'
+    name: tomcat_sessions_$3
+    labels:
+      context: "$2"
+    type: GAUGE
+  - pattern: 'Catalina<type=Manager, host=(.+), context=(.+)><>(sessionCounter|expiredSessions|rejectedSessions)(?:$|:)'
+    name: tomcat_sessions_$3_total
+    labels:
+      context: "$2"
+    type: COUNTER
+
+  # ─── TomEE: JDBC-Pools (tomcat-jdbc) ───────────────────────────────────────
+  # MBean openejb.management:ObjectType=datasources,DataSource=MES_Connection
+  # ([^,]+) schließt die Einzel-MBeans ",connections=PooledConnection[n]" aus.
+  - pattern: 'openejb.management<ObjectType=datasources, DataSource=([^,]+)><>(Active|Idle|Size|WaitCount|MaxActive|MaxIdle|MinIdle|MaxWait|RemoveAbandonedTimeout)(?:$|:)'
+    name: tomee_datasource_$2
+    labels:
+      datasource: "$1"
+    type: GAUGE
+  - pattern: 'openejb.management<ObjectType=datasources, DataSource=([^,]+)><>(BorrowedCount|ReturnedCount|CreatedCount|ReleasedCount|RemoveAbandonedCount|ReleasedIdleCount|ReconnectedCount)(?:$|:)'
+    name: tomee_datasource_$2_total
+    labels:
+      datasource: "$1"
+    type: COUNTER
+
+  # ─── TomEE: Stateless-Bean-Pools ───────────────────────────────────────────
+  # MBean openejb.management:J2EEServer=openejb,…,StatelessSessionBean=BaugruppeService,name=…,j2eeType=Pool
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, EJBModule=[^,]*, StatelessSessionBean=([^,]+), name=[^,]+, j2eeType=Pool><>(InstancesActive|InstancesIdle|InstancesPooled|AvailablePermits|MaxSize|MinSize)(?:$|:)'
+    name: tomee_beanpool_$2
+    labels:
+      bean: "$1"
+    type: GAUGE
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, EJBModule=[^,]*, StatelessSessionBean=([^,]+), name=[^,]+, j2eeType=Pool><>(AccessTimeouts|Overdrafts|Aged|Flushed|GarbageCollected|IdleTimeouts|Replaced)(?:$|:)'
+    name: tomee_beanpool_$2_total
+    labels:
+      bean: "$1"
+    type: COUNTER
+
+  # Aufrufe je Bean (Anzahl und Gesamtzeit in ms)
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, EJBModule=[^,]*, (?:StatelessSessionBean|SingletonSessionBean|MessageDrivenBean)=([^,]+), .*j2eeType=Invocations.*><>InvocationCount(?:$|:)'
+    name: tomee_bean_invocations_total
+    labels:
+      bean: "$1"
+    type: COUNTER
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, EJBModule=[^,]*, (?:StatelessSessionBean|SingletonSessionBean|MessageDrivenBean)=([^,]+), .*j2eeType=Invocations.*><>InvocationTime(?:$|:)'
+    name: tomee_bean_invocation_time_ms_total
+    labels:
+      bean: "$1"
+    type: COUNTER
+
+  # ─── TomEE: Message-Driven Beans und JMS ───────────────────────────────────
+  # MBean openejb.management:…,MessageDrivenBean=NachrichtenVerarbeitung,j2eeType=Instances,…
+  # InstanceLimit: Default MDB Container 10 – höchstens so viele Nachrichten gleichzeitig je JVM
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, EJBModule=[^,]*, MessageDrivenBean=([^,]+), j2eeType=Instances, name=[^,]+><>(InstanceCount|InstanceLimit)(?:$|:)'
+    name: tomee_mdb_$2
+    labels:
+      mdb: "$1"
+    type: GAUGE
+
+  # MBean openejb.management:…,j2eeType=ConnectionFactory,name=Default JMS Connection Factory
+  # Pool der JMS-Verbindungen (PoolMaxSize 10, Wartezeit 5 s) – „Session-Pooling“ beim Senden
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, j2eeType=ConnectionFactory, name=([^,]+)><>(ConnectionCount|IdleConnectionCount|MaxSize|MinSize|BlockingTimeoutMilliseconds)(?:$|:)'
+    name: tomee_jms_pool_$2
+    labels:
+      factory: "$1"
+    type: GAUGE
+
+  # MBean openejb.management:…,j2eeType=ResourceAdapter,name=Default JMS Resource Adapter
+  # Zustellregeln, so wie TomEE sie verwendet (Wiederholungen bis zur Dead Letter Queue, Vorrat je Konsument)
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, j2eeType=ResourceAdapter, name=([^,]+)><>(maximumRedeliveries|initialRedeliveryDelay|queuePrefetch)(?:$|:)'
+    name: tomee_jms_adapter_$2
+    labels:
+      adapter: "$1"
+    type: GAUGE
+
+  # ─── TomEE: ManagedExecutorServices aus tomee.xml ──────────────────────────
+  # MBean openejb.management:J2EEServer=openejb,J2EEApplication=<empty>,j2eeType=Resource,name=BatchHandling
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, j2eeType=Resource, name=([^,]+)><>(activeCount|poolSize|queueSize|corePoolSize|maximumPoolSize|largestPoolSize)(?:$|:)'
+    name: tomee_executor_$2
+    labels:
+      executor: "$1"
+    type: GAUGE
+  - pattern: 'openejb.management<J2EEServer=[^,]*, J2EEApplication=[^,]*, j2eeType=Resource, name=([^,]+)><>completedTaskCount(?:$|:)'
+    name: tomee_executor_completed_total
+    labels:
+      executor: "$1"
+    type: COUNTER
+
+  # ─── TomEE: Transaktionsmanager ────────────────────────────────────────────
+  # Achtung: das Attribut defaultTransactionTimeout zeigt NICHT den über
+  # defaultTransactionTimeoutSeconds gesetzten Wert (siehe Demo-Szenarien).
+  - pattern: 'openejb.management<j2eeType=TransactionManager><>active(?:$|:)'
+    name: tomee_transactions_active
+    type: GAUGE
+  - pattern: 'openejb.management<j2eeType=TransactionManager><>(commits|rollbacks)(?:$|:)'
+    name: tomee_transactions_$1_total
+    type: COUNTER
+
+  # ─── Quartz (EJB-Timer von TomEE und eigener Scheduler) ────────────────────
+  # quartz:type=QuartzScheduler,name=OpenEJB-TimerService-Scheduler,instance=OpenEJB
+  - pattern: 'quartz<type=QuartzScheduler, name=([^,]+), instance=([^,]+)><>ThreadPoolSize(?:$|:)'
+    name: quartz_threadpool_size
+    labels:
+      scheduler: "$1"
+    type: GAUGE
+  - pattern: 'quartz<type=QuartzScheduler, name=([^,]+), instance=([^,]+)><>(Started|StandbyMode|Shutdown)(?:$|:)'
+    name: quartz_$3
+    labels:
+      scheduler: "$1"
+    type: GAUGE
+
+  # ─── JVM / Betriebssystem ──────────────────────────────────────────────────
+  # java.lang:type=OperatingSystem – dieselben Werte wie in JConsole
+  - pattern: 'java.lang<type=OperatingSystem><>OpenFileDescriptorCount(?:$|:)'
+    name: jvm_os_open_file_descriptors
+    type: GAUGE
+  - pattern: 'java.lang<type=OperatingSystem><>MaxFileDescriptorCount(?:$|:)'
+    name: jvm_os_max_file_descriptors
+    type: GAUGE
+  - pattern: 'java.lang<type=OperatingSystem><>ProcessCpuLoad(?:$|:)'
+    name: jvm_os_process_cpu_load
+    type: GAUGE
+  - pattern: 'java.lang<type=OperatingSystem><>CpuLoad(?:$|:)'
+    name: jvm_os_cpu_load
+    type: GAUGE
+  - pattern: 'java.lang<type=OperatingSystem><>AvailableProcessors(?:$|:)'
+    name: jvm_os_available_processors
+    type: GAUGE
+  - pattern: 'java.lang<type=OperatingSystem><>(TotalMemorySize|FreeMemorySize)(?:$|:)'
+    name: jvm_os_$1_bytes
+    type: GAUGE
+
+  # ─── Eigene MBeans der Demo (Domain mes.demo) ──────────────────────────────
+  - pattern: 'mes.demo<type=JdbcZugriff, datasource=(.+)><>(WartendeThreads|AusgelieheneConnections|AeltesteAusleiheSekunden|LetzteWartezeitMs|MaxWartezeitMs|LaengsteAktuelleWartezeitSekunden)(?:$|:)'
+    name: mes_jdbc_$2
+    labels:
+      datasource: "$1"
+    type: GAUGE
+  - pattern: 'mes.demo<type=JdbcZugriff, datasource=(.+)><>(Ausleihen|AusleihFehler|WartezeitMsSumme)(?:$|:)'
+    name: mes_jdbc_$2_total
+    labels:
+      datasource: "$1"
+    type: COUNTER
+
+  - pattern: 'mes.demo<type=SchedulerJob, scheduler=(.+), job=(.+)><>(SekundenSeitLetztemStart|SollIntervallSekunden|LetzteVerspaetungMs|MaxVerspaetungMs|LetzteLaufzeitMs|LaeuftGerade|Wartend)(?:$|:)'
+    name: mes_scheduler_$3
+    labels:
+      scheduler: "$1"
+      # nicht "job": das Label vergibt Prometheus selbst (Scrape-Job)
+      aufgabe: "$2"
+    type: GAUGE
+  - pattern: 'mes.demo<type=SchedulerJob, scheduler=(.+), job=(.+)><>(Laeufe|Fehler|Misfires|Uebersprungen)(?:$|:)'
+    name: mes_scheduler_$3_total
+    labels:
+      scheduler: "$1"
+      aufgabe: "$2"
+    type: COUNTER
+
+  - pattern: 'mes.demo<type=Executor, name=(.+)><>QueueRemainingCapacity(?:$|:)'
+    name: mes_executor_queue_frei
+    labels:
+      executor: "$1"
+    type: GAUGE
+  - pattern: 'mes.demo<type=Executor, name=(.+)><>(Eingereicht|Abgelehnt)(?:$|:)'
+    name: mes_executor_$2_total
+    labels:
+      executor: "$1"
+    type: COUNTER
+
+  - pattern: 'mes.demo<type=OracleSperren><>(\w+)(?:$|:)'
+    name: mes_oracle_$1
+    type: GAUGE
+  - pattern: 'mes.demo<type=OracleSitzungen, benutzer=(.+)><>(Gesamt|Aktiv|Inaktiv|Blockiert|Limit)(?:$|:)'
+    name: mes_oracle_sitzungen_$2
+    labels:
+      benutzer: "$1"
+    type: GAUGE
+
+  - pattern: 'mes.demo<type=Fehler><>(\w+)(?:$|:)'
+    name: mes_fehler_total
+    labels:
+      art: "$1"
+    type: COUNTER
+
+  - pattern: 'mes.demo<type=Transaktionen><>(Aktive|AeltesteSekunden|UeberSchwelle|WarnSchwelleSekunden)(?:$|:)'
+    name: mes_transaktionen_$1
+    type: GAUGE
+  - pattern: 'mes.demo<type=Transaktionen><>(Commits|Rollbacks)(?:$|:)'
+    name: mes_transaktionen_$1_total
+    type: COUNTER
+
+  - pattern: 'mes.demo<type=Szenario><>(\w+)(?:$|:)'
+    name: mes_szenario_$1
+    type: GAUGE
+
+  # Log-Sammler (Singleton → Queue → einmal pro Sekunde in eine Datei), S16/S17
+  - pattern: 'mes.demo<type=LogSammler><>(QueueTiefe|QueueKapazitaet|AeltesterEintragSekunden|WartendeAufrufer|SchreibLimitProSekunde|LetzteSchreibdauerMs)(?:$|:)'
+    name: mes_log_$1
+    type: GAUGE
+  - pattern: 'mes.demo<type=LogSammler><>(Angenommen|Geschrieben|Verworfen)(?:$|:)'
+    name: mes_log_$1_total
+    type: COUNTER
+
+  # Message-Driven Bean aus Sicht der Anwendung (S12)
+  - pattern: 'mes.demo<type=Mdb, name=(.+)><>(Aktiv|LetzteWartezeitSekunden|MaxWartezeitSekunden|LetzteLaufzeitMs)(?:$|:)'
+    name: mes_mdb_$2
+    labels:
+      mdb: "$1"
+    type: GAUGE
+  - pattern: 'mes.demo<type=Mdb, name=(.+)><>(Verarbeitet|Fehler|Wiederholungen)(?:$|:)'
+    name: mes_mdb_$2_total
+    labels:
+      mdb: "$1"
+    type: COUNTER
+
+  - pattern: 'mes.demo<type=SocketServer, port=(.+)><>(OffeneVerbindungen|WartendeVerbindungen)(?:$|:)'
+    name: mes_socket_$2
+    labels:
+      port: "$1"
+    type: GAUGE
+  - pattern: 'mes.demo<type=SocketServer, port=(.+)><>(Angenommen|Abgelehnt|Dateien|Bytes|VerarbeitungsFehler)(?:$|:)'
+    name: mes_socket_$2_total
+    labels:
+      port: "$1"
+    type: COUNTER
+

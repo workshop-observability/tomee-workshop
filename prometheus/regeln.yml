@@ -1,0 +1,213 @@
+# Aufzeichnungs- und Alarmregeln der Demo.
+#
+# ALLE SCHWELLWERTE SIND STARTWERTE (Parameterkatalog v2 / Workshop-Block 8).
+# Sie müssen gegen eine Baseline aus dem Produktivbetrieb feinjustiert werden.
+# Alarme hängen bewusst an Dauer ("for"), nicht an Momentwerten.
+# Prometheus zeigt sie unter http://<host>:9090/alerts – eine Weiterleitung
+# (Alertmanager, Teams-Webhook) ist in der Demo nicht eingerichtet.
+
+groups:
+  - name: mes-verhaeltnisse
+    rules:
+      - record: mes:http_auslastung
+        # ohne Executor (Kundenkonfig): Connector-Threadpool; mit Executor (optimiert): Executor
+        expr: |
+          max by (instance) (tomcat_threadpool_currentthreadsbusy / (tomcat_threadpool_maxthreads > 0))
+          or
+          max by (instance) (tomcat_executor_activecount / tomcat_executor_maxthreads)
+      - record: mes:jdbc_auslastung
+        expr: tomee_datasource_active / tomee_datasource_maxactive
+      - record: mes:beanpool_auslastung
+        expr: tomee_beanpool_instancesactive / tomee_beanpool_maxsize
+      - record: mes:executor_auslastung
+        expr: tomee_executor_activecount / tomee_executor_maximumpoolsize
+      - record: mes:fd_auslastung
+        expr: jvm_os_open_file_descriptors / jvm_os_max_file_descriptors
+      - record: mes:heap_auslastung
+        expr: sum by (instance) (jvm_memory_used_bytes{area="heap"}) / sum by (instance) (jvm_memory_max_bytes{area="heap"})
+      - record: mes:gc_zeitanteil
+        expr: sum by (instance) (rate(jvm_gc_collection_seconds_sum[1m]))
+      - record: mes:container_speicher_auslastung
+        expr: container_memory_working_set_bytes{rolle!=""} / (container_spec_memory_limit_bytes{rolle!=""} > 0)
+      - record: mes:jdbc_wartezeit_mittel_ms
+        expr: rate(mes_jdbc_wartezeitmssumme_total[1m]) / rate(mes_jdbc_ausleihen_total[1m])
+      - record: mes:http_antwortzeit_mittel_ms
+        expr: rate(tomcat_processing_time_ms_total[1m]) / rate(tomcat_requests_total[1m])
+      - record: mes:http_fehlerquote
+        expr: rate(tomcat_errors_total[1m]) / rate(tomcat_requests_total[1m])
+
+  - name: mes-startwerte-datenbank
+    rules:
+      - alert: JdbcPoolAuslastungHoch
+        expr: mes:jdbc_auslastung > 0.8
+        for: 5m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.datasource }}: Pool zu {{ $value | humanizePercentage }} belegt"
+      - alert: JdbcPoolVoll
+        expr: mes:jdbc_auslastung >= 0.95
+        for: 1m
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.datasource }}: Pool voll"
+      - alert: JdbcThreadsWartenAufConnection
+        expr: tomee_datasource_waitcount > 0
+        for: 1m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.datasource }}: {{ $value }} Threads warten auf eine Connection"
+      - alert: ConnectionLangeGehalten
+        expr: mes_jdbc_aeltesteausleihesekunden > 60
+        for: 1m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.datasource }}: älteste Connection seit {{ $value | humanizeDuration }} ausgeliehen"
+      - alert: SperrSignatur
+        # Pool voll + Threads belegt + keine neuen Ausleihen = etwas hängt in der DB
+        expr: |
+          (mes:jdbc_auslastung{datasource="MES_Connection"} >= 0.95)
+          and on (instance) (mes:http_auslastung > 0.5)
+          and on (instance) (rate(tomee_datasource_borrowedcount_total{datasource="MES_Connection"}[1m]) < 1)
+        for: 1m
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}: Pool voll, Threads belegt, kein Durchsatz – Sperre in der DB wahrscheinlich"
+      - alert: OracleSessionBlockiert
+        expr: mes_oracle_laengstewartezeitsekunden > 30
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "Oracle: eine Session wartet seit {{ $value | humanizeDuration }} auf eine Sperre"
+      - alert: OracleTransaktionLang
+        expr: mes_oracle_aeltestetransaktionsekunden > 3600
+        labels: {stufe: warnung}
+        annotations:
+          summary: "Oracle: offene Transaktion seit {{ $value | humanizeDuration }}"
+
+  - name: mes-startwerte-threads
+    rules:
+      - alert: HttpThreadsAuslastungHoch
+        expr: mes:http_auslastung > 0.8
+        for: 5m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: HTTP-Threads zu {{ $value | humanizePercentage }} belegt"
+      - alert: HttpThreadsGesaettigt
+        expr: mes:http_auslastung >= 0.95
+        for: 1m
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}: HTTP-Threads gesättigt"
+      - alert: BeanPoolAuslastungHoch
+        expr: mes:beanpool_auslastung > 0.8
+        for: 5m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.bean }}: Bean-Pool zu {{ $value | humanizePercentage }} belegt"
+      - alert: BeanPoolTimeouts
+        expr: increase(tomee_beanpool_accesstimeouts_total[5m]) > 0
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.bean }}: {{ $value }} Aufrufer haben keine Bean bekommen"
+      - alert: ExecutorQueueStaut
+        expr: tomee_executor_queuesize > 0
+        for: 5m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.executor }}: {{ $value }} Aufgaben warten"
+      - alert: ExecutorLehntAb
+        expr: increase(mes_executor_abgelehnt_total[5m]) > 0
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}/{{ $labels.executor }}: Aufgaben abgelehnt"
+      - alert: Deadlock
+        expr: jvm_threads_deadlocked > 0
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value }} Threads im Deadlock"
+
+  - name: mes-startwerte-scheduler
+    rules:
+      - alert: SchedulerVerspaetet
+        expr: mes_scheduler_sekundenseitletztemstart > 2 * mes_scheduler_sollintervallsekunden and mes_scheduler_sollintervallsekunden > 0
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $labels.scheduler }}/{{ $labels.aufgabe }} seit {{ $value | humanizeDuration }} nicht gelaufen"
+      - alert: SchedulerTicktNicht
+        expr: mes_scheduler_sekundenseitletztemstart > 4 * mes_scheduler_sollintervallsekunden and mes_scheduler_sollintervallsekunden > 0
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $labels.scheduler }}/{{ $labels.aufgabe }} tickt nicht mehr"
+      - alert: SchedulerMisfire
+        expr: increase(mes_scheduler_misfires_total[10m]) > 0
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $labels.aufgabe }} hat {{ $value }} Termine verpasst"
+      - alert: TransaktionUeberSchwelle
+        expr: mes_transaktionen_ueberschwelle > 0
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value }} Transaktionen laufen länger als die Warnschwelle"
+
+  - name: mes-startwerte-jvm-container
+    rules:
+      - alert: HeapAuslastungHoch
+        expr: mes:heap_auslastung > 0.85
+        for: 10m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: Heap zu {{ $value | humanizePercentage }} belegt"
+      - alert: GcZeitanteilHoch
+        expr: mes:gc_zeitanteil > 0.05
+        for: 10m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value | humanizePercentage }} der Zeit in GC"
+      - alert: FileDescriptorsHoch
+        expr: mes:fd_auslastung > 0.7
+        for: 10m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value | humanizePercentage }} der File Descriptors belegt"
+      - alert: ContainerSpeicherHoch
+        expr: mes:container_speicher_auslastung > 0.85
+        for: 5m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.rolle }}: Container-Speicher zu {{ $value | humanizePercentage }} am Limit"
+      - alert: JvmNeustart
+        # OOM-Kills zeigen sich als Neustart (restart-Policy) – der cAdvisor-Zähler geht mit dem Container verloren
+        expr: changes(process_start_time_seconds{job=~"tomee.*"}[10m]) > 0
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}: JVM wurde neu gestartet (OOM-Kill? docker inspect prüfen)"
+      - alert: ApplikationsserverNichtErreichbar
+        expr: up{job=~"tomee.*"} == 0
+        for: 30s
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "{{ $labels.instance }}: Metriken nicht abrufbar"
+
+  - name: mes-startwerte-schnittstellen
+    rules:
+      - alert: HttpFehlerquoteHoch
+        expr: mes:http_fehlerquote > 0.01
+        for: 5m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value | humanizePercentage }} Fehler"
+      - alert: TimeoutFehler
+        expr: increase(mes_fehler_total{art!~"Sonstige|ClientAbbruch"}[5m]) > 0
+        labels: {stufe: warnung}
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value }} Fehler der Art {{ $labels.art }}"
+      - alert: HaproxyWarteschlange
+        expr: haproxy_backend_current_queue > 0
+        for: 1m
+        labels: {stufe: warnung}
+        annotations:
+          summary: "HAProxy {{ $labels.proxy }}: {{ $value }} Requests in der Warteschlange"
+      - alert: HaproxyBackendDown
+        expr: haproxy_backend_active_servers == 0
+        labels: {stufe: kritisch}
+        annotations:
+          summary: "HAProxy {{ $labels.proxy }}: kein Server verfügbar"

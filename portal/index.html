@@ -1,0 +1,176 @@
+<!doctype html>
+<!-- Übersichtsseite des Portals (Port 8080). Wird vom nginx-Container
+     mes-portal ausgeliefert, siehe portal/nginx.conf. Kein externes
+     Nachladen: die Seite muss auch ohne Internetzugang funktionieren. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MES-Demo</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1 13h2V8H1zm4 0h2V4H5zm4 0h2V6H9zm4 0h2V2h-2z' fill='%232f6fdb'/></svg>">
+<style>
+  :root {
+    color-scheme: light dark;
+    --hg: #f4f6fa; --karte: #fff; --rand: #dfe4ec;
+    --text: #1b2330; --matt: #5b6676; --akzent: #2f6fdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --hg:#12161d; --karte:#1a1f28; --rand:#2b3240; --text:#e6eaf0; --matt:#98a3b3; --akzent:#6aa1f5; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1rem 4rem;
+    background: var(--hg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .rahmen { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  .unter { color: var(--matt); margin: 0 0 2rem; }
+  .unter code { background: var(--karte); border: 1px solid var(--rand); border-radius: 4px; padding: .1em .4em; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--matt); margin: 2rem 0 .75rem; font-weight: 600; }
+  .gitter { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  a.karte {
+    display: block; padding: .9rem 1rem; text-decoration: none; color: inherit;
+    background: var(--karte); border: 1px solid var(--rand); border-radius: 10px;
+  }
+  a.karte:hover { border-color: var(--akzent); }
+  a.karte b { display: block; font-size: 1rem; }
+  a.karte .pfad { color: var(--akzent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+  a.karte small { display: block; color: var(--matt); margin-top: .25rem; }
+  table { width: 100%; border-collapse: collapse; background: var(--karte);
+          border: 1px solid var(--rand); border-radius: 10px; overflow: hidden; }
+  td { padding: .55rem .9rem; border-top: 1px solid var(--rand); vertical-align: top; }
+  tr:first-child td { border-top: 0; }
+  td.was { white-space: nowrap; font-weight: 600; width: 1%; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+  a.ziel { color: var(--akzent); text-decoration: none; }
+  a.ziel:hover { text-decoration: underline; }
+  footer { color: var(--matt); font-size: .85rem; margin-top: 2.5rem; }
+</style>
+</head>
+<body>
+<div class="rahmen">
+
+  <h1>MES-Demo – Workshop „Monitorability &amp; Performance Tuning“</h1>
+  <p class="unter">Alles unter einer Adresse: <code id="basis">http://&lt;host&gt;:8080</code>.
+     Die gewohnten Einzelports bleiben zusätzlich offen.</p>
+
+  <h2>Oberflächen</h2>
+  <div class="gitter">
+    <a class="karte" href="frontend/">
+      <b>Laststeuerung</b><span class="pfad">/frontend/</span>
+      <small>Szenarien S01–S19 starten, Parameter setzen, Live-Ampel, Benachrichtigungen (sonst :8070)</small>
+    </a>
+    <a class="karte" href="grafana/">
+      <b>Grafana</b><span class="pfad">/grafana/</span>
+      <small>Übersicht „MES – JMX Exporter“ und je Szenario ein Dashboard, Anmeldung admin / admin (sonst :3000)</small>
+    </a>
+    <a class="karte" href="prometheus/">
+      <b>Prometheus</b><span class="pfad">/prometheus/</span>
+      <small>Abfragen und Alarme unter /prometheus/alerts (sonst :9090)</small>
+    </a>
+    <a class="karte" href="haproxy">
+      <b>HAProxy-Statistik</b><span class="pfad">/haproxy</span>
+      <small>Warteschlangen und Sitzungen je Backend (sonst :8989)</small>
+    </a>
+    <a class="karte" href="cadvisor/">
+      <b>cAdvisor</b><span class="pfad">/cadvisor/</span>
+      <small>Container-Sicht: Speicher gegen Limit, CPU-Drosselung (sonst :8085)</small>
+    </a>
+    <a class="karte" href="alertmanager/">
+      <b>Alertmanager</b><span class="pfad">/alertmanager/</span>
+      <small>bündelt die Alarme und leitet sie weiter – in der Demo an die Laststeuerung (sonst :9093)</small>
+    </a>
+    <a class="karte" href="admin/">
+      <b>ActiveMQ-Konsole</b><span class="pfad">/admin/</span>
+      <small>Queues, Konsumenten, Dead Letter Queue, admin / admin (sonst :8161)</small>
+    </a>
+  </div>
+
+  <h2>Applikationsserver (TomEE Plume 10.1.2)</h2>
+  <div class="gitter">
+    <a class="karte" href="core/mes/api/status">
+      <b>Core</b><span class="pfad">/core/mes/api/…</span>
+      <small>HTTP-Anfragen, JMX-Port 9200 (sonst :8200)</small>
+    </a>
+    <a class="karte" href="fileprocessing/mes/api/status">
+      <b>FileProcessing</b><span class="pfad">/fileprocessing/mes/api/…</span>
+      <small>Socket-Server 50000–50004, JMX 9300 (sonst :8300)</small>
+    </a>
+    <a class="karte" href="singleton/mes/api/status">
+      <b>Singleton</b><span class="pfad">/singleton/mes/api/…</span>
+      <small>Stammdaten, Oracle-Sperrüberwachung, JMX 9100 (sonst :8100)</small>
+    </a>
+    <a class="karte" href="core2/mes/api/status">
+      <b>Core 2</b><span class="pfad">/core2/mes/api/…</span>
+      <small>nur mit <code>./start.sh kunde --core2</code>, JMX 9201 (sonst :8201)</small>
+    </a>
+    <a class="karte" href="facade/mes/api/status">
+      <b>Facade</b><span class="pfad">/facade/mes/api/…</span>
+      <small>nur mit <code>./start.sh kunde --facade</code> (sonst :8400)</small>
+    </a>
+    <a class="karte" href="lb/mes/api/status">
+      <b>über HAProxy</b><span class="pfad">/lb/mes/api/…</span>
+      <small>Weg des Kunden über den Lastverteiler (sonst :8090);
+             <code>/lb/mes/fileprocessing/api/…</code>, IDOC-Port unter <code>/lb-idoc/</code></small>
+    </a>
+  </div>
+
+  <h2>Rohe Metriken</h2>
+  <div class="gitter">
+    <a class="karte" href="metriken/core/metrics">
+      <b>JMX Exporter Core</b><span class="pfad">/metriken/core/metrics</span>
+      <small>sonst :8882/metrics</small>
+    </a>
+    <a class="karte" href="metriken/fileprocessing/metrics">
+      <b>JMX Exporter FileProcessing</b><span class="pfad">/metriken/fileprocessing/metrics</span>
+      <small>sonst :8883/metrics</small>
+    </a>
+    <a class="karte" href="metriken/singleton/metrics">
+      <b>JMX Exporter Singleton</b><span class="pfad">/metriken/singleton/metrics</span>
+      <small>sonst :8881/metrics</small>
+    </a>
+    <a class="karte" href="metriken/activemq/metrics">
+      <b>JMX Exporter ActiveMQ</b><span class="pfad">/metriken/activemq/metrics</span>
+      <small>Queue-Tiefe, Konsumenten, Durchsatz – sonst :8886/metrics</small>
+    </a>
+    <a class="karte" href="metriken/haproxy/metrics">
+      <b>HAProxy-Exporter</b><span class="pfad">/metriken/haproxy/metrics</span>
+      <small>sonst :8989/metrics</small>
+    </a>
+  </div>
+
+  <h2>Nicht über Port 8080 erreichbar (kein HTTP)</h2>
+  <table>
+    <tr><td class="was">JConsole / VisualVM</td>
+        <td><a class="ziel" data-port="9200" target="_blank" rel="noopener"><code>9200</code></a> Core ·
+            <a class="ziel" data-port="9300" target="_blank" rel="noopener"><code>9300</code></a> FileProcessing ·
+            <a class="ziel" data-port="9100" target="_blank" rel="noopener"><code>9100</code></a> Singleton ·
+            <a class="ziel" data-port="9201" target="_blank" rel="noopener"><code>9201</code></a> Core 2
+            <br><small>Facade absichtlich falsch: 9300 im Container, 9400 gemappt</small></td></tr>
+    <tr><td class="was">Oracle</td>
+        <td><a class="ziel" data-port="1521" target="_blank" rel="noopener"><code>1521</code></a>/FREEPDB1 · User <code>MES_MONITOR</code> / <code>mes_demo</code></td></tr>
+    <tr><td class="was">Socket-Schnittstelle</td>
+        <td>TCP <a class="ziel" data-port="50000" target="_blank" rel="noopener"><code>50000</code></a>–50004 (FileProcessing über HAProxy)</td></tr>
+  </table>
+
+  <footer>
+    Vereinfachte Nachbildung des Zollner-Aufbaus – kein Abbild der Produktion.
+    Szenarien und Messwerte: <code>workshop/Demo-Szenarien.md</code>
+  </footer>
+
+</div>
+<script>
+  // Adresse dieser Seite in die Beispiele eintragen, damit sie kopierbar sind.
+  // Die Links öffnen host:port in einem neuen Tab – der Browser zeigt dort
+  // nur, ob der Port erreichbar ist; JMX/Oracle/TCP sprechen kein HTTP.
+  const host = location.hostname;
+  document.getElementById('basis').textContent = location.origin;
+  for (const el of document.querySelectorAll('.ziel')) {
+    el.href = 'http://' + host + ':' + el.dataset.port + '/';
+    el.querySelector('code').textContent = host + ':' + el.dataset.port;
+  }
+</script>
+</body>
+</html>
