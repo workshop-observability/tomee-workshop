@@ -189,6 +189,14 @@ was der Dienst mit Pfaden macht:
 | Präfix durchreichen | `proxy_pass http://ziel:port;` (ohne `/`) – der Dienst muss selbst unter dem Unterpfad ausliefern | Grafana (`GF_SERVER_SERVE_FROM_SUB_PATH`), cAdvisor (`--url_base_prefix`), HAProxy (zweiter Listener `:8990` mit `stats uri /haproxy`) |
 | Name erst zur Laufzeit auflösen | `resolver 127.0.0.11` + Variable im `proxy_pass` | Facade – der Container läuft meist gar nicht, sonst startet nginx nicht |
 
+**Hinter einem weiteren Reverse Proxy** (`https://<host>/<pfad>/` → `:8080/`, der Proxy
+schneidet `<pfad>` ab): `PORTAL_PFAD=/<pfad>` in `.env` setzen und die Container neu
+anlegen (`./start.sh` bzw. `docker compose up -d`). Ohne die Einstellung verlieren
+Weiterleitungen und die Dienste mit absoluten Pfaden (Grafana, cAdvisor,
+HAProxy-Statistik, ActiveMQ-Konsole) den Unterpfad, und der äußere Proxy antwortet
+mit 404. `portal/nginx.conf` ist dafür eine Vorlage, in die der nginx-Container
+`${PORTAL_PFAD}` beim Start einsetzt.
+
 Prometheus braucht dafür keine Einstellung: seine Oberfläche ermittelt das Präfix
 aus der Adresse im Browser. Grafana dagegen liefert fest unter `/grafana/` aus;
 der Aufruf von `:3000` leitet deshalb dorthin weiter.

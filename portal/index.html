@@ -166,7 +166,7 @@
   // Die Links öffnen host:port in einem neuen Tab – der Browser zeigt dort
   // nur, ob der Port erreichbar ist; JMX/Oracle/TCP sprechen kein HTTP.
   const host = location.hostname;
-  document.getElementById('basis').textContent = location.origin;
+  document.getElementById('basis').textContent = new URL('.', location.href).href.replace(/\/$/, '');
   for (const el of document.querySelectorAll('.ziel')) {
     el.href = 'http://' + host + ':' + el.dataset.port + '/';
     el.querySelector('code').textContent = host + ':' + el.dataset.port;
