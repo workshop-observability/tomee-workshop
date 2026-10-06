@@ -206,7 +206,7 @@ def jmx_dashboard():
             [(f"tomcat_threadpool_currentthreadsbusy{{{INST}}}", "{{instance}} busy"),
              (f"tomcat_threadpool_currentthreadcount{{{INST}}}", "{{instance}} vorhanden"),
              (f"tomcat_threadpool_maxthreads{{{INST}}} > 0", "{{instance}} max")],
-            beschreibung="Catalina:type=ThreadPool,name=\"http-nio-8080\". Kundenkonfig: stiller Default maxThreads 200. "
+            beschreibung="Catalina:type=ThreadPool,name=\"http-nio-8080\". Zollner-Konfig: stiller Default maxThreads 200. "
                          "Mit Executor meldet der Connector maxThreads = -1 – dann gilt tomcat_executor_*")
     d.kurve("tomcat_threadpool_connectioncount / keepalivecount",
             [(f"tomcat_threadpool_connectioncount{{{INST}}}", "{{instance}} offen"),
@@ -236,7 +236,7 @@ def jmx_dashboard():
             [(f"tomee_datasource_active{{{INST}}}", "{{instance}} {{datasource}} active"),
              (f"tomee_datasource_idle{{{INST}}}", "{{instance}} {{datasource}} idle"),
              (f"tomee_datasource_maxactive{{{INST}}}", "{{instance}} {{datasource}} max")],
-            beschreibung="→ Active, Idle, MaxActive (Kunde: 50 bzw. 20)")
+            beschreibung="→ Active, Idle, MaxActive (Zollner: 50 bzw. 20)")
     d.kurve("tomee_datasource_waitcount",
             [(f"tomee_datasource_waitcount{{{INST}}}", "{{instance}} {{datasource}}")],
             schwellen=[(None, "green"), (1, "orange"), (5, "red")],
@@ -251,14 +251,14 @@ def jmx_dashboard():
             balken=True, beschreibung="→ RemoveAbandonedCount: vom Pool zwangsweise zurückgeholte Connections")
     d.tabelle("tomee_datasource_maxactive / maxidle / minidle / maxwait / removeabandonedtimeout – so sieht TomEE die Konfiguration",
               f"max by (instance, datasource, __name__) ({{__name__=~\"tomee_datasource_(maxactive|maxidle|minidle|maxwait|removeabandonedtimeout)\",{INST}}})",
-              breite=16, beschreibung="MaxWait = 30000 trotz maxWaitTime = -1 in der Kundenkonfig")
+              breite=16, beschreibung="MaxWait = 30000 trotz maxWaitTime = -1 in der Zollner-Konfig")
 
     d.zeile("tomee_beanpool_* · tomee_bean_invocation* – openejb.management:j2eeType=Pool / Invocations")
     d.kurve("tomee_beanpool_instancesactive / maxsize",
             [(f"tomee_beanpool_instancesactive{{{INST}}} / tomee_beanpool_maxsize{{{INST}}} > 0", "{{instance}} {{bean}}")],
             "percentunit", schwellen=AUSLASTUNG, max_wert=1, min_wert=0,
             beschreibung="…,StatelessSessionBean=…,j2eeType=Pool → InstancesActive / MaxSize "
-                         "(Kunde: 50, strictPooling). Nur Beans mit aktiven Instanzen")
+                         "(Zollner: 50, strictPooling). Nur Beans mit aktiven Instanzen")
     d.kurve("tomee_beanpool_availablepermits",
             [(f"tomee_beanpool_availablepermits{{{INST}}} < tomee_beanpool_maxsize{{{INST}}}", "{{instance}} {{bean}}")],
             beschreibung="→ AvailablePermits. 0 = der nächste Aufrufer wartet bis accessTimeout (30 s)")
@@ -280,7 +280,7 @@ def jmx_dashboard():
             beschreibung="→ activeCount, poolSize. Über corePoolSize wächst der Pool erst bei voller Queue")
     d.kurve("tomee_executor_queuesize",
             [(f"tomee_executor_queuesize{{{INST}}} > 0", "{{instance}} {{executor}}")],
-            beschreibung="→ queueSize (Kunde: Queue = 1000 bei allen Executoren)")
+            beschreibung="→ queueSize (Zollner: Queue = 1000 bei allen Executoren)")
     d.tabelle("tomee_executor_corepoolsize / maximumpoolsize / largestpoolsize",
               f"max by (instance, executor, __name__) ({{__name__=~\"tomee_executor_(corepoolsize|maximumpoolsize|largestpoolsize)\",{INST}}})",
               breite=8, beschreibung="Konfiguration (Core / Max) und bisher größte Poolgröße")
@@ -329,7 +329,7 @@ def jmx_dashboard():
             beschreibung="Die JVM meldet einen OOM-Kill des Containers nie selbst – sichtbar nur als Neustart oder Lücke")
 
     # ─── Eigene MBeans der Demo-App ──────────────────────────────────────────
-    d.zeile("mes_* – eigene MBeans der Demo-App (mes.demo:*), beim Kunden (noch) nicht vorhanden")
+    d.zeile("mes_* – eigene MBeans der Demo-App (mes.demo:*), bei Zollner (noch) nicht vorhanden")
     d.kurve("mes_oracle_blockiertesessions · laengstewartezeitsekunden",
             [("max(mes_oracle_blockiertesessions)", "blockierte Sessions"),
              ("max(mes_oracle_laengstewartezeitsekunden)", "längste Wartezeit (s)")],
@@ -356,7 +356,7 @@ def jmx_dashboard():
     d.kurve("container_memory_working_set_bytes / spec_memory_limit_bytes",
             [('max by (rolle) (container_memory_working_set_bytes{rolle=~"core|fileprocessing|singleton|facade"})', "{{rolle}} belegt"),
              ('max by (rolle) (container_spec_memory_limit_bytes{rolle=~"core|fileprocessing|singleton|facade"} > 0)', "{{rolle}} Limit")],
-            "bytes", beschreibung="cAdvisor. Kunde Facade: -Xmx 7168M bei Limit 2000M")
+            "bytes", beschreibung="cAdvisor. Zollner Facade: -Xmx 7168M bei Limit 2000M")
     d.kurve("container_cpu_cfs_throttled_seconds_total (rate)",
             [('sum by (rolle) (rate(container_cpu_cfs_throttled_seconds_total{rolle!=""}[1m])) > 0', "{{rolle}}")], "s",
             beschreibung="cAdvisor: Zeit, in der der Container sein CPU-Kontingent aufgebraucht hatte")
@@ -529,7 +529,7 @@ def s04():
             [(f"tomcat_threadpool_currentthreadsbusy{{{CORE}}}", "busy"),
              (f"tomcat_threadpool_currentthreadcount{{{CORE}}}", "vorhanden"),
              (f"tomcat_threadpool_maxthreads{{{CORE}}}", "max")],
-            beschreibung="Catalina:type=ThreadPool – Kundenkonfig: stiller Default 200")
+            beschreibung="Catalina:type=ThreadPool – Zollner-Konfig: stiller Default 200")
     d.kurve("HAProxy: Sessions und Queue (core)",
             [('haproxy_backend_current_sessions{proxy="core"}', "Sessions"),
              ('haproxy_backend_current_queue{proxy="core"}', "Queue")],
@@ -551,7 +551,7 @@ def s05():
     ex = SINGLETON
     d.wert("Aktive Aufgaben", f"sum(tomee_executor_activecount{{{ex}}})", breite=5, beschreibung="tomee_executor_activecount")
     d.wert("Aufgaben in Queues", f"sum(tomee_executor_queuesize{{{ex}}})", breite=5,
-           schwellen=[(None, "green"), (500, "orange"), (900, "red")], beschreibung="tomee_executor_queuesize (Kunde: Queue 1000)")
+           schwellen=[(None, "green"), (500, "orange"), (900, "red")], beschreibung="tomee_executor_queuesize (Zollner: Queue 1000)")
     d.wert("Threads über Core", f"sum(clamp_min(tomee_executor_poolsize{{{ex}}} - tomee_executor_corepoolsize{{{ex}}}, 0))", breite=5,
            schwellen=[(None, "green"), (1, "orange")],
            beschreibung="poolSize − corePoolSize. Wird erst > 0, wenn die Queue voll ist")

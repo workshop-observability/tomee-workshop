@@ -1,7 +1,7 @@
 {
   "uid": "mes-s01",
   "title": "MES – S01 Tabelle durch Replikation gesperrt – Pools laufen leer",
-  "description": "Oracle blockiert → JDBC-Pool 50/50 → BaugruppeService 50/50 → HTTP-Threads → nach 30 s BEAN_POOL_TIMEOUT, auch für Leser.",
+  "description": "Oracle blockiert → JDBC-Pool 50/50 → BaugruppeService 50/50 → HTTP-Threads → nach 30 s BEAN_POOL_TIMEOUT, auch für Leser. Mit ort = master: Master-Pool 20/20, WaitCount steigt, PoolErschoepft.",
   "tags": [
     "mes-demo",
     "szenario"
@@ -93,7 +93,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Gelockte Tabelle (WICHTIGSTE)** · belastet: **core (über HAProxy), Sperre in Oracle** · starten: Laststeuerung `:8070` oder `python3 lasttest/mes_last.py --host <vm> szenario S01`\n\n**Worauf es ankommt:** Oracle blockiert → JDBC-Pool 50/50 → BaugruppeService 50/50 → HTTP-Threads → nach 30 s BEAN_POOL_TIMEOUT, auch für Leser."
+        "content": "**Gelockte Tabelle** · belastet: **core (über HAProxy), Sperre in Oracle** · starten: Laststeuerung `:8070` oder `python3 lasttest/mes_last.py --host <vm> szenario S01`\n\n**Worauf es ankommt:** Oracle blockiert → JDBC-Pool 50/50 → BaugruppeService 50/50 → HTTP-Threads → nach 30 s BEAN_POOL_TIMEOUT, auch für Leser. Mit ort = master: Master-Pool 20/20, WaitCount steigt, PoolErschoepft."
       }
     },
     {

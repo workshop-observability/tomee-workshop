@@ -35,7 +35,7 @@ servers:
   - url: ../core/mes/api
     description: Core direkt (sonst :8200)
   - url: ../lb/mes/api
-    description: über den HAProxy, so wie der Kunde einsteigt (sonst :8090) – landet auf Core bzw. Core 2
+    description: über den HAProxy, so wie die Clients einsteigen (sonst :8090) – landet auf Core bzw. Core 2
   - url: ../fileprocessing/mes/api
     description: FileProcessing direkt (sonst :8300)
   - url: ../singleton/mes/api
@@ -138,8 +138,8 @@ paths:
         Buchungszähler, setzt die Station und schreibt einen Satz in `BUCHUNG`.
 
         **Genau hier hängt die Anwendung, wenn die Replikation die Tabelle gesperrt hat
-        (S01).** Ohne `warten` wartet der Aufruf unbegrenzt auf die Sperre (Verhalten beim
-        Kunden) und hält dabei einen HTTP-Thread, eine Bean-Instanz und eine Connection.
+        (S01).** Ohne `warten` wartet der Aufruf unbegrenzt auf die Sperre (Verhalten bei
+        Zollner) und hält dabei einen HTTP-Thread, eine Bean-Instanz und eine Connection.
         Mit `warten` oder `abfrageTimeout` gibt er nach der genannten Zeit mit `503` auf –
         der Unterschied zwischen beiden ist der Kern von S01.
 
@@ -195,7 +195,7 @@ paths:
         schreibt ihn in eine zufällige Baugruppe der lokalen DB (`MES_Connection`). Braucht
         also **beide** DataSources nacheinander.
 
-        Der Singleton ruft denselben Dienst periodisch per Timer auf (beim Kunden alle
+        Der Singleton ruft denselben Dienst periodisch per Timer auf (bei Zollner alle
         5 Minuten). Ist `BAUGRUPPE` gesperrt, hängt der Schreibschritt wie eine Buchung.
       responses:
         "200":
@@ -216,7 +216,7 @@ paths:
       summary: In die Master-DB schreiben
       description: |
         Erhöht die Version eines zufälligen Stammsatzes in der Master-DB. Läuft über den
-        kleinen Pool `Master_MES_Connection` (in der Kundenkonfiguration 20 Connections) –
+        kleinen Pool `Master_MES_Connection` (in der Zollner-Konfiguration 20 Connections) –
         er ist deshalb als erster erschöpft.
       responses:
         "200":
@@ -256,7 +256,7 @@ paths:
       tags: [Fachlich]
       summary: Logeintrag des MES-Frameworks abgeben
       description: |
-        Nachbildung des Log-Wegs beim Kunden („schreibt Logs über die Applikationsserver“,
+        Nachbildung des Log-Wegs bei Zollner („schreibt Logs über die Applikationsserver“,
         3 von 7 Mio. Requests am Tag): Der Eintrag landet in einer Queue, ein eigener Thread
         schreibt einmal pro Sekunde in eine Datei.
 
@@ -457,7 +457,7 @@ paths:
       summary: "S03 – Bean-Instanz belegen"
       description: |
         Ruft eine Stateless Bean auf, die `ms` Millisekunden schläft – ohne die Datenbank zu
-        brauchen. Die Bean läuft im „Default Stateless Container“ (in der Kundenkonfiguration
+        brauchen. Die Bean läuft im „Default Stateless Container“ (in der Zollner-Konfiguration
         `maxSize 50`, `strictPooling`, `accessTimeout 30 s`).
 
         **Wirkung:** Mehr parallele Aufrufe als Instanzen → weitere Aufrufe warten auf eine
@@ -674,7 +674,7 @@ paths:
           schema: { type: integer, default: 30 }
         - name: timeout
           in: query
-          description: Transaction Timeout in Sekunden; `0` = Default aus der `tomee.xml` (Kunde 14400 s).
+          description: Transaction Timeout in Sekunden; `0` = Default aus der `tomee.xml` (Zollner 14400 s).
           schema: { type: integer, default: 0 }
         - name: sperreId
           in: query
@@ -951,8 +951,7 @@ paths:
       description: |
         Stellt ein, wie die Queue hinter `POST /log` mit einer Log-Flut umgeht:
 
-        * `unbegrenzt` – nimmt alles an, der Rückstand wächst im Heap (vermutlich der Stand
-          beim Kunden).
+        * `unbegrenzt` – nimmt alles an, der Rückstand wächst im Heap.
         * `verwerfen` – begrenzt auf `kapazitaet`; bei voller Queue geht der Eintrag verloren
           und wird gezählt, der Aufrufer bekommt `503`.
         * `blockieren` – begrenzt auf `kapazitaet`; der Aufrufer wartet auf einen Platz und
@@ -1153,7 +1152,7 @@ components:
       in: query
       description: |
         Sekunden, die auf eine Zeilensperre gewartet wird (`FOR UPDATE WAIT n`).
-        **Weglassen = unbegrenzt warten** – das Verhalten beim Kunden.
+        **Weglassen = unbegrenzt warten** – das Verhalten bei Zollner.
       schema: { type: integer, minimum: 0 }
     AbfrageTimeout:
       name: abfrageTimeout

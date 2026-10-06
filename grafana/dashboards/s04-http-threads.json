@@ -417,7 +417,7 @@
     {
       "type": "timeseries",
       "title": "HTTP-Threads: busy / vorhanden / max",
-      "description": "Catalina:type=ThreadPool – Kundenkonfig: stiller Default 200",
+      "description": "Catalina:type=ThreadPool – Zollner-Konfig: stiller Default 200",
       "id": 9,
       "datasource": {
         "type": "prometheus",

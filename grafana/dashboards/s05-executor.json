@@ -156,7 +156,7 @@
     {
       "type": "stat",
       "title": "Aufgaben in Queues",
-      "description": "tomee_executor_queuesize (Kunde: Queue 1000)",
+      "description": "tomee_executor_queuesize (Zollner: Queue 1000)",
       "id": 4,
       "datasource": {
         "type": "prometheus",

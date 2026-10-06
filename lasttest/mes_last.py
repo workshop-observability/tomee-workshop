@@ -545,7 +545,7 @@ def s01_tabellensperre(p):
         aktion("core", "/szenario/db/sperre", tabelle=tabelle, modus=p.modus, sekunden=p.dauer)
         if p.ort == "master":
             hinweis("Frage: Warum steigt hier WaitCount, bei der lokalen Sperre aber nicht? Und warum kommt der Fehler "
-                    "jetzt als PoolErschoepft? Beim Kunden trifft diese Sperre alle Länder zugleich.")
+                    "jetzt als PoolErschoepft? Bei Zollner trifft diese Sperre alle Länder zugleich.")
         else:
             hinweis("Frage: Welche Metrik reagiert zuerst? Oracle-Leser warten nie auf Sperren – warum scheitern die Lese-Requests nach 30 s trotzdem?")
         beobachten(p.dauer, ["core", "singleton"], lasten, mit_sperren=True, mit_haproxy=True)
@@ -570,8 +570,8 @@ def s02_verbindungen_voll(p):
 
 
 def s03_beanpool_leer(p):
-    hinweis(f"Langsame Bean ohne Datenbank: {p.parallel} Aufrufer, 50 Beans (Kunde). "
-            "Wer keine Bean bekommt, wartet accessTimeout (Kunde 30 s) und bekommt dann einen Fehler.")
+    hinweis(f"Langsame Bean ohne Datenbank: {p.parallel} Aufrufer, 50 Beans (Zollner). "
+            "Wer keine Bean bekommt, wartet accessTimeout (Zollner 30 s) und bekommt dann einen Fehler.")
     last = Last("core", "/szenario/bean/langsam", "GET", p.parallel, params={"ms": p.ms}, name="bean langsam").start()
     try:
         beobachten(p.dauer, ["core"], [last], intervall=5)
@@ -618,7 +618,7 @@ def s05_executor(p):
 
 def s06_timer_tickt_nicht(p):
     if p.ursache == "sperre":
-        hinweis("Kundenfall: Der Stammdatenabgleich (EJB-Timer und Quartz, jede Minute) hängt an einer Tabellensperre.")
+        hinweis("Zollner-Fall: Der Stammdatenabgleich (EJB-Timer und Quartz, jede Minute) hängt an einer Tabellensperre.")
         aktion("core", "/szenario/db/sperre", tabelle="BAUGRUPPE", sekunden=p.dauer)
         hinweis("Jede Minute hängt ein weiterer Abgleich. Nach 3 Läufen sind alle 3 EJB-Timer-Threads belegt – "
                 "danach tickt auch der Heartbeat nicht mehr. Kein Fehler, keine Exception.")
@@ -657,7 +657,7 @@ def s07_transaktion(p):
         beobachten(p.sekunden + 10, ["core"], [last], mit_sperren=True, intervall=10)
         t.join(timeout=30)
         print("   Ergebnis der langen Transaktion:", kurz(ergebnis.get("wert")))
-        hinweis("Ohne Timeout gilt der Default der Kundenkonfiguration: 14400 s. "
+        hinweis("Ohne Timeout gilt der Default der Zollner-Konfiguration: 14400 s. "
                 "Die TomEE-MBean zeigt trotzdem '10 MINUTES' (siehe /mes/api/diagnose/konfig).")
     finally:
         last.stop()
@@ -674,7 +674,7 @@ def s08_sessions(p):
 
 
 def s09_facade_grenzen(p):
-    hinweis("Facade: -Xmx2500m bei 700 MB Container-Limit (Kunde: 7168 MB bei 2000 MB). "
+    hinweis("Facade: -Xmx2500m bei 700 MB Container-Limit (Zollner: 7168 MB bei 2000 MB). "
             "Voraussetzung: ./start.sh kunde --facade")
     for _ in range(p.schritte):
         status, inhalt = aufruf("facade", "/szenario/jvm/leck", "POST", params={"mb": p.schritt_mb})
@@ -824,7 +824,7 @@ def _container(rolle):
 
 
 def s14_speicher(p):
-    hinweis("Singleton: -Xmx1024m bei 1150 MB Container-Limit (Kunde: -Xms4048M -Xmx4500M bei -m 5000m) – der Heap "
+    hinweis("Singleton: -Xmx1024m bei 1150 MB Container-Limit (Zollner: -Xms4048M -Xmx4500M bei -m 5000m) – der Heap "
             "darf fast alles haben. Jetzt wächst, was NICHT im Heap liegt: Threads (Stack) und Direct Buffer.")
     try:
         for schritt in range(1, p.schritte + 1):
@@ -871,7 +871,7 @@ def s15_sitzungsgrenze(p):
         for last in lasten:
             last.stop()
         aktion("core", "/szenario/db/sitzungslimit", "DELETE")
-    hinweis("Rechnung für den Kunden: Summe aller maxActive über alle Container und Applikationsserver gegen "
+    hinweis("Rechnung für Zollner: Summe aller maxActive über alle Container und Applikationsserver gegen "
             "processes/sessions der Datenbank – und bei der Master-DB über alle Länder.")
 
 
@@ -879,7 +879,7 @@ def s16_kundenprofil(p):
     rate = 81 * p.faktor
     log_rate = rate * p.log_anteil / 100
     fach = rate - log_rate
-    hinweis(f"Kundenprofil: 7 Mio. Requests/Tag ≈ 81/s, davon {p.log_anteil} % Logeinträge. Faktor {p.faktor:g} → "
+    hinweis(f"Zollner-Lastprofil: 7 Mio. Requests/Tag ≈ 81/s, davon {p.log_anteil} % Logeinträge. Faktor {p.faktor:g} → "
             f"{rate:.0f}/s ({fach:.0f} fachlich, {log_rate:.0f} Log) über HAProxy, dazu Dateien per TCP "
             f"(20 000/Tag ≈ {0.23 * p.faktor:.2f}/s).")
     text = ("Protokoll " + "x" * 200).encode()
@@ -955,7 +955,7 @@ def s18_leck(p):
             zeige_status(["core"], [lesen], mit_sperren=False)
             print("  " + oracle_sitzungen_zeile())
             time.sleep(min(p.intervall, max(0, ende - time.time())))
-        hinweis("Kunde: removeAbandoned = true, Timeout 3600 s (MES_Connection) bzw. removeAbandoned = false (Master) – "
+        hinweis("Zollner: removeAbandoned = true, Timeout 3600 s (MES_Connection) bzw. removeAbandoned = false (Master) – "
                 "das Leck bleibt eine Stunde oder für immer. Optimiert: suspectTimeout 60 s (Log-Warnung), Abräumen nach 600 s.")
         beobachten(p.halten, ["core"], [lesen], intervall=10)
     finally:
@@ -1007,7 +1007,7 @@ EXECUTOREN = ["BatchHandling", "MslHandling", "GeneralThreadPool", "FileWatcher"
 DATENQUELLEN = ["Master_MES_Connection", "MES_Connection"]
 
 SZENARIEN = {
-    "S01": Szenario(s01_tabellensperre, "Gelockte Tabelle (WICHTIGSTE)",
+    "S01": Szenario(s01_tabellensperre, "Gelockte Tabelle",
                     "Tabelle durch Replikation gesperrt – Pools laufen leer",
                     "Oracle blockiert → JDBC-Pool 50/50 → BaugruppeService 50/50 → HTTP-Threads → nach 30 s BEAN_POOL_TIMEOUT, auch für Leser. "
                     "Mit ort = master: Master-Pool 20/20, WaitCount steigt, PoolErschoepft.", [
@@ -1050,7 +1050,7 @@ SZENARIEN = {
                     "Timer tickt nicht mehr („Cronjob läuft manchmal nicht“)",
                     "Heartbeat: Sekunden seit letztem Lauf steigen linear – ohne Fehler, ohne Log. Misfires erst im Nachhinein.", [
                         P("ursache", "Ursache", "sperre", auswahl=["sperre", "lange-laeufe"],
-                          hilfe="sperre = Kundenfall (Abgleich hängt an Tabellensperre), lange-laeufe = Timer-Threads direkt belegt"),
+                          hilfe="sperre = Zollner-Fall (Abgleich hängt an Tabellensperre), lange-laeufe = Timer-Threads direkt belegt"),
                         P("timer", "Scheduler (nur lange-laeufe)", "ejb", auswahl=["ejb", "quartz"]),
                         P("anzahl", "Lange Läufe (nur lange-laeufe)", 3, 1, 50, hilfe="≥ Pool-Größe (EJB 3, Quartz 5), damit alle Threads belegt sind"),
                         P_dauer(240, "Dauer der Störung"),
@@ -1059,7 +1059,7 @@ SZENARIEN = {
                     "Transaktion länger als erlaubt",
                     "Buchungen hängen bis Methodenende, Rollback erst danach; ab 60 s Logeintrag „Transaktion läuft seit …“.", [
                         P("sekunden", "Laufzeit der Transaktion", 90, 5, 3600, "s"),
-                        P("timeout", "Transaction Timeout", 30, 0, 14400, "s", "0 = Default des TX-Managers (Kunde 14400 s)"),
+                        P("timeout", "Transaction Timeout", 30, 0, 14400, "s", "0 = Default des TX-Managers (Zollner 14400 s)"),
                         P("sperre_id", "Gesperrte Baugruppe", 42, 1, 10000),
                         P("buchungen", "Buchende Clients", 5, 0, 200)]),
     "S08": Szenario(s08_sessions, "Session-Pooling",
@@ -1083,7 +1083,7 @@ SZENARIEN = {
                         P("schritte", "Schritte", 6, 1, 50),
                         P("nachlauf", "Nachlauf", 30, 0, 600, "s")]),
     "S11": Szenario(s11_intervall, "Scheduler",
-                    "Job läuft länger als sein Intervall („von 1/5 auf 10“)",
+                    "Job läuft länger als sein Intervall",
                     "Ohne Schutz belegt der Job Laufzeit ÷ Intervall Timer-Threads, der Heartbeat bleibt stehen. "
                     "Mit singleton-lock warten fällige Läufe auf die Sperre, nach 30 s SingletonTimeout. Mit ueberspringen: ein Thread.", [
                         P("intervall", "Intervall", 10, 1, 3600, "s"),
@@ -1137,11 +1137,11 @@ SZENARIEN = {
                         P("sekunden", "Laufzeit je Abfrage", 20, 1, 600, "s"),
                         P_dauer(60)]),
     "S16": Szenario(s16_kundenprofil, "Warnstufen / Baseline",
-                    "Normalbetrieb mit dem Lastprofil des Kunden",
+                    "Normalbetrieb mit dem Lastprofil von Zollner",
                     "7 Mio. Requests/Tag ≈ 81/s (43 % Logging), Dateien per TCP – Auslastung im Normalbetrieb und in der Spitze "
                     "als Grundlage für die Warnstufen. Am Ende: Spitzenwerte und Antwortzeiten.", [
                         P("faktor", "Faktor auf das Tagesmittel", 1.0, 0.1, 10.0, hilfe="1 = Mittel 81/s, 3 = angenommene Spitze"),
-                        P("log_anteil", "Anteil Logeinträge", 43, 0, 100, "%", "Kunde: 3 von 7 Mio. Requests"),
+                        P("log_anteil", "Anteil Logeinträge", 43, 0, 100, "%", "Zollner: 3 von 7 Mio. Requests"),
                         P("dateien", "Dateien per TCP", "ja", auswahl=["ja", "nein"]),
                         P_dauer(300)]),
     "S17": Szenario(s17_logflut, "Logging",
@@ -1149,7 +1149,7 @@ SZENARIEN = {
                     "Log-Queue füllt sich, Verzug wächst. unbegrenzt: Heap steigt; verwerfen: Einträge gehen verloren; "
                     "blockieren: HTTP-Threads warten auf die Queue, fachliche Requests werden langsam.", [
                         P("modus", "Queue-Verhalten", "unbegrenzt", auswahl=["unbegrenzt", "verwerfen", "blockieren"],
-                          hilfe="unbegrenzt = vermutlich Kundenstand"),
+                          hilfe="unbegrenzt = Queue ohne Obergrenze"),
                         P("rate", "Logeinträge pro Sekunde", 400, 1, 5000),
                         P("groesse_kb", "Größe je Eintrag", 8, 1, 512, "KB"),
                         P("schreiblimit", "Schreiber schafft", 100, 0, 100000, "Zeilen/s", "0 = ohne Grenze"),

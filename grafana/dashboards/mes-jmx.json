@@ -558,7 +558,7 @@
     {
       "type": "timeseries",
       "title": "tomcat_threadpool_currentthreadsbusy / currentthreadcount / maxthreads",
-      "description": "Catalina:type=ThreadPool,name=\"http-nio-8080\". Kundenkonfig: stiller Default maxThreads 200. Mit Executor meldet der Connector maxThreads = -1 – dann gilt tomcat_executor_*",
+      "description": "Catalina:type=ThreadPool,name=\"http-nio-8080\". Zollner-Konfig: stiller Default maxThreads 200. Mit Executor meldet der Connector maxThreads = -1 – dann gilt tomcat_executor_*",
       "id": 10,
       "datasource": {
         "type": "prometheus",
@@ -974,7 +974,7 @@
     {
       "type": "timeseries",
       "title": "tomee_datasource_active / idle / maxactive",
-      "description": "→ Active, Idle, MaxActive (Kunde: 50 bzw. 20)",
+      "description": "→ Active, Idle, MaxActive (Zollner: 50 bzw. 20)",
       "id": 18,
       "datasource": {
         "type": "prometheus",
@@ -1242,7 +1242,7 @@
     {
       "type": "table",
       "title": "tomee_datasource_maxactive / maxidle / minidle / maxwait / removeabandonedtimeout – so sieht TomEE die Konfiguration",
-      "description": "MaxWait = 30000 trotz maxWaitTime = -1 in der Kundenkonfig",
+      "description": "MaxWait = 30000 trotz maxWaitTime = -1 in der Zollner-Konfig",
       "id": 22,
       "datasource": {
         "type": "prometheus",
@@ -1302,7 +1302,7 @@
     {
       "type": "timeseries",
       "title": "tomee_beanpool_instancesactive / maxsize",
-      "description": "…,StatelessSessionBean=…,j2eeType=Pool → InstancesActive / MaxSize (Kunde: 50, strictPooling). Nur Beans mit aktiven Instanzen",
+      "description": "…,StatelessSessionBean=…,j2eeType=Pool → InstancesActive / MaxSize (Zollner: 50, strictPooling). Nur Beans mit aktiven Instanzen",
       "id": 24,
       "datasource": {
         "type": "prometheus",
@@ -1679,7 +1679,7 @@
     {
       "type": "timeseries",
       "title": "tomee_executor_queuesize",
-      "description": "→ queueSize (Kunde: Queue = 1000 bei allen Executoren)",
+      "description": "→ queueSize (Zollner: Queue = 1000 bei allen Executoren)",
       "id": 31,
       "datasource": {
         "type": "prometheus",
@@ -2378,7 +2378,7 @@
     },
     {
       "type": "row",
-      "title": "mes_* – eigene MBeans der Demo-App (mes.demo:*), beim Kunden (noch) nicht vorhanden",
+      "title": "mes_* – eigene MBeans der Demo-App (mes.demo:*), bei Zollner (noch) nicht vorhanden",
       "collapsed": false,
       "id": 45,
       "gridPos": {
@@ -2736,7 +2736,7 @@
         {
           "type": "timeseries",
           "title": "container_memory_working_set_bytes / spec_memory_limit_bytes",
-          "description": "cAdvisor. Kunde Facade: -Xmx 7168M bei Limit 2000M",
+          "description": "cAdvisor. Zollner Facade: -Xmx 7168M bei Limit 2000M",
           "id": 52,
           "datasource": {
             "type": "prometheus",
