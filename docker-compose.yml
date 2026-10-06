@@ -368,17 +368,35 @@ services:
     # Zeit zum Aufräumen: laufende Szenarien bekommen beim Stoppen SIGINT (wie Strg+C)
     stop_grace_period: 50s
 
+  # ─── Swagger UI ────────────────────────────────────────────────────────────
+  # Beschreibung der REST-Schnittstellen (swagger/openapi.yaml) zum Nachlesen und
+  # Ausprobieren. Nur über das Portal erreichbar (/swagger/): „Try it out“ ruft
+  # die Applikationsserver über deren Portal-Pfade auf (../core/mes/api …), so
+  # bleibt alles unter einer Adresse und ohne CORS.
+  swagger:
+    image: swaggerapi/swagger-ui:v5.29.0
+    container_name: mes-swagger
+    networks: [mes]
+    environment:
+      SWAGGER_JSON: /spec/openapi.yaml
+      DISPLAY_REQUEST_DURATION: "true"
+      DEFAULT_MODELS_EXPAND_DEPTH: "-1"
+      # kein Prüfdienst im Internet
+      VALIDATOR_URL: "none"
+    volumes:
+      - ./swagger:/spec:ro,z
+
   # ─── Portal ────────────────────────────────────────────────────────────────
   # Ein Eingang für alle Weboberflächen: http://<host>:8080
   #   /frontend/  Laststeuerung   /grafana/  /prometheus/  /haproxy  /cadvisor/
-  #   /core/ /fileprocessing/ /singleton/ /facade/ /lb/   /metriken/…
+  #   /core/ /fileprocessing/ /singleton/ /facade/ /lb/   /metriken/…  /swagger/
   # Die Einzelports bleiben zusätzlich offen; Regeln in portal/nginx.conf.
   portal:
     image: nginx:1.29-alpine
     container_name: mes-portal
     networks: [mes]
     depends_on: [core, fileprocessing, singleton, haproxy, prometheus, grafana, cadvisor, laststeuerung,
-                 activemq, alertmanager]
+                 activemq, alertmanager, swagger]
     ports:
       - "${PORTAL_PORT:-8080}:8080"
     # Die Laststeuerung läuft im Host-Netz und ist nur über den Host erreichbar

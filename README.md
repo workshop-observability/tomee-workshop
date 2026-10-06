@@ -169,6 +169,7 @@ Oracle. Teilnehmer ohne SSH-Zugang erreicht man so allerdings nicht.
 | cAdvisor | `/cadvisor/` | `:8085/cadvisor/` | – |
 | Core / FileProcessing / Singleton | `/core/mes/api/status`, `/fileprocessing/…`, `/singleton/…` | `:8200` / `:8300` / `:8100` + `/mes/api/status` | – |
 | über HAProxy | `/lb/mes/api/…`, `/lb/mes/fileprocessing/api/…`, `/lb-idoc/mes/api/…` | `:8090`, `:8095` | – |
+| REST-Schnittstellen (Swagger UI) | `/swagger/` | – (nur über das Portal) | – |
 | JMX Exporter | `/metriken/core/metrics`, `…/fileprocessing/…`, `…/singleton/…` | `:8882` (core), `8883` (fp), `8881` (singleton), `8884` (facade) | – |
 | JConsole / VisualVM | kein HTTP – nicht über 8080 | `jconsole <host>:9200` (core), `9300` (fp), `9100` (singleton) | – |
 | Oracle (SQL Developer, DBeaver) | kein HTTP – nicht über 8080 | `<host>:1521/FREEPDB1`, User `MES_MONITOR` | mes_demo |

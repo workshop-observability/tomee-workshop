@@ -1,0 +1,1248 @@
+# OpenAPI-Beschreibung der REST-Schnittstellen der MES-Demo (mes-demo-app, /mes/api).
+# Von Hand gepflegt – Quelle sind die Klassen in
+# mes-demo-app/src/main/java/de/demo/mes/rest/. Wer dort eine Schnittstelle ändert,
+# zieht sie hier nach. Angezeigt wird die Datei von der Swagger UI im Portal (/swagger/).
+openapi: 3.0.3
+
+info:
+  title: MES-Demo – REST-Schnittstellen
+  version: "1.0"
+  description: |
+    Schnittstellen der Demo-Anwendung `mes-demo-app` (TomEE Plume 10.1.2). In jedem
+    Applikationsserver läuft **dasselbe WAR** unter `/mes/api`; die Rolle (`core`,
+    `fileprocessing`, `singleton`, `facade`) entscheidet nur über Hintergrunddienste.
+    Oben unter **Servers** wählst du, an welchen Server „Try it out“ die Anfrage schickt.
+
+    Drei Gruppen:
+
+    * **Fachlich** – die „normalen“ Anwendungsfälle, auf die der Lasttest zielt.
+    * **Szenario …** – Schnittstellen, die gezielt **eine** Störung erzeugen (Szenarien
+      S01–S19 aus `lasttest/mes_last.py`). Jede erzeugt genau eine Ursache, damit die
+      Wirkung im Dashboard eindeutig zuzuordnen ist.
+    * **Diagnose** – nur lesend; liest dieselben MBeans wie JConsole und der JMX Exporter.
+
+    **Achtung:** Die Szenario-Schnittstellen verändern den Zustand des Servers wirklich
+    (Sperren in Oracle, belegte Pools, Speicher). Die meisten Störungen haben ein
+    Gegenstück mit `DELETE`; `DELETE /szenario/alle` räumt alles auf einmal auf.
+
+    **Fehlerantworten** haben immer dieselbe Form (`fehler`, `meldung`). Engpässe an
+    Ressourcen werden zu `503` – so sieht sie auch der HAProxy.
+
+    Die Swagger UI zeigt zu jeder Anfrage die Dauer an – bei den „langsamen“
+    Schnittstellen ist genau sie das Messergebnis.
+
+servers:
+  - url: ../core/mes/api
+    description: Core direkt (sonst :8200)
+  - url: ../lb/mes/api
+    description: über den HAProxy, so wie der Kunde einsteigt (sonst :8090) – landet auf Core bzw. Core 2
+  - url: ../fileprocessing/mes/api
+    description: FileProcessing direkt (sonst :8300)
+  - url: ../singleton/mes/api
+    description: Singleton direkt (sonst :8100)
+  - url: ../lb-idoc/mes/api
+    description: Singleton über den HAProxy (IDOC-Port, sonst :8095)
+  - url: ../core2/mes/api
+    description: Core 2 – nur mit ./start.sh kunde --core2 (sonst :8201)
+  - url: ../facade/mes/api
+    description: Facade – nur mit ./start.sh kunde --facade (sonst :8400)
+
+tags:
+  - name: Fachlich
+    description: Normale Anwendungsfälle – Baugruppe lesen und buchen, Stammdaten, Logeinträge, Health-Check.
+  - name: Szenario Datenbank
+    description: "S01/S06 Tabellensperre durch die Replikation, S02 langsame Abfragen, S15 Sitzungsgrenze in Oracle, S18 Connection-Leck."
+  - name: Szenario Pools und Threads
+    description: "S03 Bean-Pool, S04 HTTP-Threads, S05 Executoren aus tomee.xml, S08 HTTP-Sessions."
+  - name: Szenario Scheduler und Transaktionen
+    description: "S06 Timer tickt nicht mehr, S11 Job läuft länger als sein Intervall, S07 Transaktion länger als erlaubt."
+  - name: Szenario JVM
+    description: "S09 Heap-Leck, S10 File Descriptors, S14 Speicher außerhalb des Heaps, S19 GC-Spirale."
+  - name: Szenario Messaging
+    description: "S12 Nachrichten stauen sich (ActiveMQ, Queue MES.EINGANG, Message Driven Bean)."
+  - name: Szenario Betrieb
+    description: "S13 Wartung eines Applikationsservers, S17 Log-Flut, Aufräumen aller Störungen."
+  - name: Diagnose
+    description: Lesende Sicht auf den Server. Die Antworten nennen den JMX-ObjectName mit, damit sich jeder Wert in JConsole und Prometheus wiederfinden lässt.
+
+paths:
+  # ═══════════════════════════ Fachlich ═══════════════════════════
+  /status:
+    get:
+      tags: [Fachlich]
+      summary: Health-Check des HAProxy
+      description: |
+        Meldet, ob der Server Anfragen annimmt, und nennt Rolle und Konfigurationsvariante.
+
+        Im **Wartungsmodus** (S13, `POST /szenario/wartung`) antwortet die Schnittstelle mit
+        `503`. Der HAProxy nimmt den Server nach drei Fehlversuchen aus der Verteilung;
+        bereits laufende Anfragen laufen zu Ende.
+      responses:
+        "200":
+          description: Server nimmt Anfragen an.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+              example: { status: ok, rolle: core, konfig: kunde }
+        "503":
+          description: Server ist im Wartungsmodus.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+              example: { status: wartung, rolle: core, konfig: kunde }
+
+  /baugruppe/{id}:
+    get:
+      tags: [Fachlich]
+      summary: Zustand einer Baugruppe lesen
+      description: |
+        Reiner Lesezugriff auf die Tabelle `BAUGRUPPE` über die DataSource `MES_Connection`.
+
+        Leser warten in Oracle nie auf Sperren (Multiversion Read Consistency) – die
+        Schnittstelle antwortet deshalb auch bei gesperrter Tabelle (S01) schnell, **solange
+        noch eine Connection und eine Bean-Instanz frei ist**. Gibt es die Baugruppe nicht,
+        ist die Antwort ein leeres Objekt `{}`.
+      parameters:
+        - $ref: "#/components/parameters/BaugruppeId"
+      responses:
+        "200":
+          description: Die Baugruppe, oder `{}` wenn es die ID nicht gibt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Baugruppe" }
+        "503": { $ref: "#/components/responses/Engpass" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /baugruppe/zufall:
+    get:
+      tags: [Fachlich]
+      summary: Zufällige Baugruppe lesen
+      description: |
+        Wie `GET /baugruppe/{id}`, mit einer zufälligen ID zwischen 1 und 10000. Der Lasttest
+        nutzt diese Schnittstelle als Lese-Grundlast.
+      responses:
+        "200":
+          description: Die Baugruppe.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Baugruppe" }
+        "503": { $ref: "#/components/responses/Engpass" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /baugruppe/{id}/buchung:
+    post:
+      tags: [Fachlich]
+      summary: Auf eine Baugruppe buchen
+      description: |
+        Schreibender Zugriff: sperrt die Zeile mit `SELECT … FOR UPDATE`, erhöht den
+        Buchungszähler, setzt die Station und schreibt einen Satz in `BUCHUNG`.
+
+        **Genau hier hängt die Anwendung, wenn die Replikation die Tabelle gesperrt hat
+        (S01).** Ohne `warten` wartet der Aufruf unbegrenzt auf die Sperre (Verhalten beim
+        Kunden) und hält dabei einen HTTP-Thread, eine Bean-Instanz und eine Connection.
+        Mit `warten` oder `abfrageTimeout` gibt er nach der genannten Zeit mit `503` auf –
+        der Unterschied zwischen beiden ist der Kern von S01.
+
+        Gibt es die Baugruppe nicht, lautet die Antwort `{"id": …, "gefunden": false}`.
+      parameters:
+        - $ref: "#/components/parameters/BaugruppeId"
+        - $ref: "#/components/parameters/Station"
+        - $ref: "#/components/parameters/Warten"
+        - $ref: "#/components/parameters/AbfrageTimeout"
+      responses:
+        "200":
+          description: Gebucht.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Buchung" }
+              example: { id: 4711, buchungen: 12, station: STATION-1 }
+        "503":
+          description: |
+            Engpass. Typisch hier: `SPERR_TIMEOUT` (ORA-30006 nach `warten` Sekunden),
+            `ABFRAGE_TIMEOUT` (`abfrageTimeout` abgelaufen), `POOL_ERSCHOEPFT` (keine
+            Connection frei), `BEAN_POOL_TIMEOUT` (keine Bean-Instanz frei).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Fehler" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /baugruppe/zufall/buchung:
+    post:
+      tags: [Fachlich]
+      summary: Auf eine zufällige Baugruppe buchen
+      description: |
+        Wie `POST /baugruppe/{id}/buchung`, mit einer zufälligen ID zwischen 1 und 10000.
+        Der Lasttest nutzt diese Schnittstelle als Schreib-Grundlast.
+      parameters:
+        - $ref: "#/components/parameters/Station"
+        - $ref: "#/components/parameters/Warten"
+        - $ref: "#/components/parameters/AbfrageTimeout"
+      responses:
+        "200":
+          description: Gebucht.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Buchung" }
+        "503": { $ref: "#/components/responses/Engpass" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /stammdaten/abgleich:
+    post:
+      tags: [Fachlich]
+      summary: Stammdaten abgleichen (Master-DB → lokale DB)
+      description: |
+        Liest einen zufälligen Artikel aus der Master-DB (`Master_MES_Connection`) und
+        schreibt ihn in eine zufällige Baugruppe der lokalen DB (`MES_Connection`). Braucht
+        also **beide** DataSources nacheinander.
+
+        Der Singleton ruft denselben Dienst periodisch per Timer auf (beim Kunden alle
+        5 Minuten). Ist `BAUGRUPPE` gesperrt, hängt der Schreibschritt wie eine Buchung.
+      responses:
+        "200":
+          description: Abgeglichen.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artikel: { type: string, example: ART-815 }
+                  baugruppe: { type: integer, format: int64, example: 4711 }
+        "503": { $ref: "#/components/responses/Engpass" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /stammdaten/schreiben:
+    post:
+      tags: [Fachlich]
+      summary: In die Master-DB schreiben
+      description: |
+        Erhöht die Version eines zufälligen Stammsatzes in der Master-DB. Läuft über den
+        kleinen Pool `Master_MES_Connection` (in der Kundenkonfiguration 20 Connections) –
+        er ist deshalb als erster erschöpft.
+      responses:
+        "200":
+          description: Geschrieben.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stammdatenId: { type: integer, format: int64, example: 1203 }
+        "503": { $ref: "#/components/responses/Engpass" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /stammdaten/zufall:
+    get:
+      tags: [Fachlich]
+      summary: Zufälligen Stammsatz aus der Master-DB lesen
+      description: |
+        Liest einen Stammsatz (ID 1–2000) über `Master_MES_Connection`. Leser warten nie auf
+        eine Sperre – wohl aber auf eine freie Connection.
+      responses:
+        "200":
+          description: "Der Stammsatz, oder `{\"id\": …, \"gefunden\": false}`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, format: int64, example: 1203 }
+                  artikel: { type: string, example: ART-1203 }
+                  version: { type: integer, format: int64, example: 3 }
+        "503": { $ref: "#/components/responses/Engpass" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /log:
+    post:
+      tags: [Fachlich]
+      summary: Logeintrag des MES-Frameworks abgeben
+      description: |
+        Nachbildung des Log-Wegs beim Kunden („schreibt Logs über die Applikationsserver“,
+        3 von 7 Mio. Requests am Tag): Der Eintrag landet in einer Queue, ein eigener Thread
+        schreibt einmal pro Sekunde in eine Datei.
+
+        Wie sich die Schnittstelle bei einer **Log-Flut** (S17) verhält, hängt vom Modus der
+        Queue ab (`POST /szenario/log`): `unbegrenzt` nimmt alles an, `verwerfen` antwortet
+        bei voller Queue mit `503`, `blockieren` lässt den Aufrufer warten.
+      parameters:
+        - $ref: "#/components/parameters/Station"
+      requestBody:
+        description: Der Logtext, beliebiger Inhalt.
+        content:
+          text/plain:
+            schema: { type: string }
+            example: "Baugruppe 4711 an STATION-1 geprüft"
+      responses:
+        "202":
+          description: Eintrag angenommen (noch nicht geschrieben).
+          content:
+            application/json:
+              schema: { type: object, properties: { angenommen: { type: boolean, example: true } } }
+        "503":
+          description: Queue voll, Eintrag verworfen (nur im Modus `verwerfen`).
+          content:
+            application/json:
+              schema: { type: object, properties: { angenommen: { type: boolean, example: false } } }
+
+  # ═══════════════════════ Szenario Datenbank ═══════════════════════
+  /szenario/db/sperre:
+    post:
+      tags: [Szenario Datenbank]
+      summary: "S01/S06 – Tabelle oder Zeilen sperren (Replikation)"
+      description: |
+        Simuliert den Replikationsprozess: Eine **fremde** Oracle-Session (User `MES_REPL`,
+        nicht aus dem Pool der Anwendung) sperrt eine Tabelle oder einen Zeilenbereich und
+        hält die Sperre `sekunden` lang. Der Aufruf kehrt zurück, sobald die Sperre sitzt
+        (spätestens nach 10 s).
+
+        **Wirkung:** Alle Buchungen auf die gesperrten Zeilen hängen. Jede hängende Buchung
+        hält einen HTTP-Thread, eine Bean-Instanz und eine Connection – die Pools laufen
+        nacheinander leer, am Ende antwortet auch das Lesen nicht mehr.
+
+        **Sichtbar in:** Dashboard S01, `GET /diagnose/db-sperren`, `GET /diagnose/uebersicht`.
+        **Ende:** `DELETE /szenario/db/sperre` oder Ablauf der Zeit.
+      parameters:
+        - name: tabelle
+          in: query
+          description: Welche Tabelle gesperrt wird.
+          schema: { type: string, enum: [BAUGRUPPE, BUCHUNG, STAMMDATEN], default: BAUGRUPPE }
+        - name: modus
+          in: query
+          description: "`tabelle` = `LOCK TABLE … IN EXCLUSIVE MODE`; `zeilen` = `SELECT … FOR UPDATE` für die IDs `von`–`bis`."
+          schema: { type: string, enum: [tabelle, zeilen], default: tabelle }
+        - name: von
+          in: query
+          description: Erste gesperrte ID (nur Modus `zeilen`).
+          schema: { type: integer, format: int64, default: 1 }
+        - name: bis
+          in: query
+          description: Letzte gesperrte ID (nur Modus `zeilen`).
+          schema: { type: integer, format: int64, default: 10000 }
+        - name: sekunden
+          in: query
+          description: Wie lange die Sperre gehalten wird.
+          schema: { type: integer, default: 600 }
+      responses:
+        "200":
+          description: |
+            Sperre angefordert. `status` ist `gesetzt`, `wartet selbst auf eine andere Sperre`
+            oder `fehler: …` (z. B. wenn die Datenbank nicht erreichbar ist).
+          content:
+            application/json:
+              example: { sperre: "mes_local.baugruppe (ganze Tabelle)", sekunden: 600, status: gesetzt }
+        "400": { $ref: "#/components/responses/Eingabe" }
+    get:
+      tags: [Szenario Datenbank]
+      summary: Aktive Sperren dieses Servers auflisten
+      description: Nur die Sperren, die über **diesen** Server gesetzt wurden – die Sicht der Datenbank liefert `GET /diagnose/db-sperren`.
+      responses:
+        "200":
+          description: Liste der Sperren.
+          content:
+            application/json:
+              example: [{ sperre: "mes_local.baugruppe (ganze Tabelle)", seitSekunden: 42 }]
+    delete:
+      tags: [Szenario Datenbank]
+      summary: Alle Sperren dieses Servers freigeben
+      description: Bricht die Replikations-Sessions ab (Rollback). Hängende Buchungen laufen danach sofort weiter.
+      responses:
+        "200":
+          description: Anzahl freigegebener Sperren.
+          content:
+            application/json:
+              example: { freigegeben: 1 }
+
+  /szenario/db/langsam:
+    get:
+      tags: [Szenario Datenbank]
+      summary: "S02 – langsame Abfrage (belegt eine Connection)"
+      description: |
+        Hält eine Connection `sekunden` lang mit einer laufenden Abfrage belegt
+        (`DBMS_SESSION.SLEEP`) – **ohne** Sperre in der Datenbank.
+
+        **Wirkung:** Viele parallele Aufrufe erschöpfen den Connection-Pool. Weitere Aufrufe
+        warten auf eine Connection und scheitern nach der Wartezeit des Pools mit `503`
+        (`POOL_ERSCHOEPFT`).
+      parameters:
+        - name: sekunden
+          in: query
+          description: Dauer der Abfrage.
+          schema: { type: integer, default: 10 }
+        - $ref: "#/components/parameters/DataSource"
+      responses:
+        "200":
+          description: Abfrage beendet.
+          content:
+            application/json:
+              example: { dataSource: MES_Connection, dauerMs: 10012 }
+        "400": { $ref: "#/components/responses/Eingabe" }
+        "503": { $ref: "#/components/responses/Engpass" }
+
+  /szenario/db/sitzungslimit:
+    post:
+      tags: [Szenario Datenbank]
+      summary: "S15 – Sitzungsgrenze in Oracle setzen"
+      description: |
+        Begrenzt in Oracle die gleichzeitigen Sessions eines Users (Profil `MES_SITZUNGEN`,
+        `SESSIONS_PER_USER`). Die Änderung gilt für die **Datenbank**, also für alle
+        Applikationsserver zugleich.
+
+        **Wirkung:** Wer darüber hinaus eine Connection öffnen will, bekommt sofort
+        ORA-02391 – egal, wie viel Luft der eigene Pool noch hat. Die Anwendung antwortet
+        mit `503` (`DB_SITZUNGSLIMIT`).
+      parameters:
+        - name: benutzer
+          in: query
+          description: Oracle-User, dessen Sessions begrenzt werden.
+          schema: { type: string, enum: [MES_LOCAL, MES_MASTER], default: MES_LOCAL }
+        - name: limit
+          in: query
+          description: Höchstzahl gleichzeitiger Sessions; `0` = unbegrenzt.
+          schema: { type: integer, default: 60 }
+      responses:
+        "200":
+          description: Grenze gesetzt. `resource_limit` zeigt, ob Oracle Profile überhaupt durchsetzt.
+          content:
+            application/json:
+              example: { benutzer: MES_LOCAL, sessionsPerUser: "60", resource_limit: "TRUE" }
+        "400": { $ref: "#/components/responses/Eingabe" }
+    delete:
+      tags: [Szenario Datenbank]
+      summary: Sitzungsgrenze aufheben
+      description: Setzt das Profil zurück auf `UNLIMITED`. Das Profil bleibt dem User zugeordnet.
+      responses:
+        "200":
+          description: "`aufgehoben`, `keine gesetzt` oder `fehler: …`."
+          content:
+            application/json:
+              example: { sitzungslimit: aufgehoben }
+
+  /szenario/db/leck:
+    post:
+      tags: [Szenario Datenbank]
+      summary: "S18 – Connection-Leck erzeugen"
+      description: |
+        Leiht `anzahl` Connections aus und gibt sie nie zurück – wie ein Codepfad ohne
+        `close()`.
+
+        **Wirkung:** In Oracle stehen die Sessions `INACTIVE`, der Pool hält sie für belegt.
+        Der Pool wird dauerhaft kleiner, bis er erschöpft ist. Ist beim Ausleihen keine
+        Connection mehr frei, bricht der Aufruf ab und nennt den Grund im Feld `fehler`.
+      parameters:
+        - $ref: "#/components/parameters/DataSource"
+        - name: anzahl
+          in: query
+          description: Wie viele Connections zusätzlich geleckt werden.
+          schema: { type: integer, default: 5 }
+      responses:
+        "200":
+          description: Stand des Lecks.
+          content:
+            application/json:
+              example: { dataSource: MES_Connection, neuGeleckt: 5, geleckt: 5 }
+        "400": { $ref: "#/components/responses/Eingabe" }
+    delete:
+      tags: [Szenario Datenbank]
+      summary: Geleckte Connections schließen
+      responses:
+        "200":
+          description: Anzahl geschlossener Connections.
+          content:
+            application/json:
+              example: { geschlossen: 5 }
+
+  # ═══════════════════ Szenario Pools und Threads ═══════════════════
+  /szenario/bean/langsam:
+    get:
+      tags: [Szenario Pools und Threads]
+      summary: "S03 – Bean-Instanz belegen"
+      description: |
+        Ruft eine Stateless Bean auf, die `ms` Millisekunden schläft – ohne die Datenbank zu
+        brauchen. Die Bean läuft im „Default Stateless Container“ (in der Kundenkonfiguration
+        `maxSize 50`, `strictPooling`, `accessTimeout 30 s`).
+
+        **Wirkung:** Mehr parallele Aufrufe als Instanzen → weitere Aufrufe warten auf eine
+        Instanz und scheitern nach dem `accessTimeout` mit `503` (`BEAN_POOL_TIMEOUT`).
+      parameters:
+        - $ref: "#/components/parameters/Ms"
+      responses:
+        "200": { $ref: "#/components/responses/MitDauer" }
+        "503": { $ref: "#/components/responses/Engpass" }
+
+  /szenario/http/langsam:
+    get:
+      tags: [Szenario Pools und Threads]
+      summary: "S04 – HTTP-Thread belegen"
+      description: |
+        Schläft `ms` Millisekunden direkt im HTTP-Thread – ohne Bean, ohne Datenbank.
+
+        **Wirkung:** Belegt nur den Thread-Pool des Tomcat-Connectors. Sind alle Threads
+        belegt, stauen sich neue Verbindungen in der Warteschlange des Connectors bzw. im
+        HAProxy; aus Sicht des Clients steigt nur die Antwortzeit.
+      parameters:
+        - $ref: "#/components/parameters/Ms"
+      responses:
+        "200": { $ref: "#/components/responses/MitDauer" }
+
+  /szenario/executor:
+    get:
+      tags: [Szenario Pools und Threads]
+      summary: "S05 – Zustand der Executoren"
+      description: |
+        Schnappschuss aller ManagedExecutorServices aus der `tomee.xml` (`GeneralThreadPool`,
+        `FileWatcher`, `SocketHandler`, `MslHandling`, `BatchHandling`): aktive Threads,
+        Warteschlange, angenommene und abgelehnte Aufgaben.
+      responses:
+        "200":
+          description: Ein Eintrag je Executor.
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+
+  /szenario/executor/{name}:
+    post:
+      tags: [Szenario Pools und Threads]
+      summary: "S05 – Executor mit Aufgaben füllen"
+      description: |
+        Reicht `aufgaben` Aufgaben ein, die jeweils `ms` Millisekunden schlafen.
+
+        **Wirkung:** Zeigt, was Core-Größe, Maximalgröße und Warteschlange eines Executors
+        wirklich bedeuten: Ein ThreadPoolExecutor startet erst dann Threads über die
+        Core-Größe hinaus, wenn die Warteschlange voll ist. Die Antwort nennt, wie viele
+        Aufgaben angenommen und wie viele abgelehnt wurden. Die Aufgaben laufen von selbst
+        aus – ein Gegenstück zum Abbrechen gibt es nicht.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Name des Executors, exakt wie in der `tomee.xml`.
+          schema:
+            type: string
+            enum: [GeneralThreadPool, FileWatcher, SocketHandler, MslHandling, BatchHandling]
+            default: BatchHandling
+        - name: aufgaben
+          in: query
+          description: Anzahl eingereichter Aufgaben.
+          schema: { type: integer, default: 100 }
+        - name: ms
+          in: query
+          description: Laufzeit jeder Aufgabe in Millisekunden.
+          schema: { type: integer, format: int64, default: 30000 }
+      responses:
+        "200":
+          description: Angenommene und abgelehnte Aufgaben sowie der Zustand danach.
+          content:
+            application/json:
+              example: { angenommen: 100, abgelehnt: 0, zustand: {} }
+        "400": { $ref: "#/components/responses/Eingabe" }
+
+  /szenario/session/anlegen:
+    get:
+      tags: [Szenario Pools und Threads]
+      summary: "S08 – HTTP-Session anlegen"
+      description: |
+        Legt eine HTTP-Session an und hängt `kb` Kilobyte Nutzdaten daran. Ein Client **ohne
+        Cookie** bekommt bei jedem Aufruf eine neue Session.
+
+        **Wirkung:** Sessions bleiben bis zum Session-Timeout im Heap. Der Lasttest ruft die
+        Schnittstelle ohne Cookie auf und füllt so den Speicher. Im Browser (mit Cookie, auch
+        hier in der Swagger UI) entsteht nur beim ersten Aufruf eine neue Session – `neu`
+        zeigt es an.
+      parameters:
+        - name: kb
+          in: query
+          description: Größe der Nutzdaten je Session in Kilobyte.
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Kennung der Session und ihr Timeout.
+          content:
+            application/json:
+              example: { session: 5E2B…, neu: true, timeoutSekunden: 1800 }
+
+  # ══════════════ Szenario Scheduler und Transaktionen ══════════════
+  /szenario/scheduler:
+    get:
+      tags: [Szenario Scheduler und Transaktionen]
+      summary: "S06/S11 – Zustand der Scheduler"
+      description: |
+        Zeigt die Größe des EJB-Timer-Pools (`openejb.timer.pool.size`), den Zustand von
+        Quartz, die Zahl blockierter Timer-Threads und je Job: Sekunden seit dem letzten
+        Start gegenüber dem Soll-Intervall, Läufe, größte Verspätung, Misfires,
+        übersprungene und wartende Läufe.
+
+        `sekundenSeitLetztemStart` deutlich über `sollIntervall` heißt: **der Job tickt
+        nicht mehr** („Cronjob läuft manchmal nicht“).
+      responses:
+        "200":
+          description: Zustand der Scheduler und aller Jobs.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /szenario/scheduler/blockieren:
+    post:
+      tags: [Szenario Scheduler und Transaktionen]
+      summary: "S06 – Timer-Threads blockieren"
+      description: |
+        Plant `anzahl` Aufgaben ein, die jeweils einen Timer-Thread `sekunden` lang belegen.
+
+        **Wirkung:** Der EJB-Timer-Pool ist klein (Standard 3 Threads). Sind alle belegt,
+        startet kein anderer Timer mehr – auch nicht der Stammdatenabgleich. Die Belegung
+        läuft von selbst aus; abbrechen lässt sie sich nicht.
+      parameters:
+        - name: art
+          in: query
+          description: Welcher Scheduler blockiert wird.
+          schema: { type: string, enum: [ejb, quartz], default: ejb }
+        - name: anzahl
+          in: query
+          description: Anzahl blockierter Threads.
+          schema: { type: integer, default: 3 }
+        - name: sekunden
+          in: query
+          description: Dauer der Blockade.
+          schema: { type: integer, default: 120 }
+      responses:
+        "200":
+          description: Blockade eingeplant.
+          content:
+            application/json:
+              example: { art: ejb, anzahl: 3, sekunden: 120 }
+
+  /szenario/scheduler/langlaeufer:
+    post:
+      tags: [Szenario Scheduler und Transaktionen]
+      summary: "S11 – Job starten, der länger läuft als sein Intervall"
+      description: |
+        Startet einen EJB-Timer, der alle `intervall` Sekunden fällig wird und `laufzeit`
+        Sekunden arbeitet. Ein bereits laufender Langläufer wird ersetzt.
+
+        `schutz` bestimmt, was passiert, wenn der nächste Lauf fällig wird, während der
+        vorige noch arbeitet:
+
+        * `ohne` – die Läufe überlappen und belegen nach und nach alle Timer-Threads.
+        * `ueberspringen` – der fällige Lauf wird ausgelassen und gezählt.
+        * `singleton-lock` – der fällige Lauf wartet auf die Schreibsperre des Singletons
+          und hält dabei seinen Timer-Thread.
+      parameters:
+        - name: intervall
+          in: query
+          description: Intervall des Timers in Sekunden (mindestens 1).
+          schema: { type: integer, default: 10, minimum: 1 }
+        - name: laufzeit
+          in: query
+          description: Laufzeit eines Laufs in Sekunden (mindestens 1).
+          schema: { type: integer, default: 25, minimum: 1 }
+        - name: schutz
+          in: query
+          description: Verhalten bei Überlappung, siehe oben.
+          schema: { type: string, enum: [ohne, ueberspringen, singleton-lock], default: ohne }
+      responses:
+        "200":
+          description: Langläufer gestartet.
+          content:
+            application/json:
+              example: { intervallSekunden: 10, laufzeitSekunden: 25, schutz: ohne, timerPool: "3 (Default)", ersetzt: 0 }
+        "400": { $ref: "#/components/responses/Eingabe" }
+    delete:
+      tags: [Szenario Scheduler und Transaktionen]
+      summary: Langläufer stoppen
+      description: Beendet die Planung; bereits laufende Läufe arbeiten zu Ende.
+      responses:
+        "200":
+          description: Anzahl gestoppter Timer.
+          content:
+            application/json:
+              example: { gestoppt: 1 }
+
+  /szenario/tx/lang:
+    get:
+      tags: [Szenario Scheduler und Transaktionen]
+      summary: "S07 – Transaktion länger als erlaubt"
+      description: |
+        Öffnet eine Transaktion (Bean-Managed), hält sie `sekunden` lang offen und schreibt
+        dann einen Satz in `BUCHUNG`.
+
+        **Was das Szenario zeigt:** Ein Transaction Timeout **unterbricht die Arbeit nicht** –
+        er markiert die Transaktion nur zum Rollback. Der Aufruf läuft die volle Dauer,
+        Sperren bleiben bis zum Ende bestehen, und erst der Commit scheitert. Die Antwort
+        kommt deshalb immer mit `200`; ob die Transaktion durchging, steht in `ergebnis`.
+      parameters:
+        - name: sekunden
+          in: query
+          description: Wie lange die Transaktion offen bleibt.
+          schema: { type: integer, default: 30 }
+        - name: timeout
+          in: query
+          description: Transaction Timeout in Sekunden; `0` = Default aus der `tomee.xml` (Kunde 14400 s).
+          schema: { type: integer, default: 0 }
+        - name: sperreId
+          in: query
+          description: "Größer 0: die Baugruppe mit dieser ID wird für die gesamte Dauer gesperrt."
+          schema: { type: integer, format: int64, default: 0 }
+      responses:
+        "200":
+          description: "`ergebnis` ist `committed` oder `zurückgerollt` (dann mit `fehlerArt` und `meldung`)."
+          content:
+            application/json:
+              example: { dauerSekunden: 30, timeoutSekunden: 10, ergebnis: zurückgerollt, fehlerArt: TRANSAKTION_ABGEBROCHEN, meldung: "…" }
+        "503": { $ref: "#/components/responses/Engpass" }
+
+  # ═════════════════════════ Szenario JVM ═════════════════════════
+  /szenario/jvm/leck:
+    post:
+      tags: [Szenario JVM]
+      summary: "S09/S19 – Heap-Leck vergrößern"
+      description: |
+        Belegt `mb` Megabyte im Heap und hält sie fest, bis sie mit `DELETE` freigegeben
+        werden. Jeder Aufruf kommt hinzu.
+
+        **Wirkung:** Auf der Facade (S09) ist der Heap größer eingestellt als das
+        Container-Limit – der Container wird vom Kernel beendet, bevor die JVM einen
+        OutOfMemoryError meldet. Zusammen mit `GET /szenario/jvm/muell` entsteht die
+        GC-Spirale (S19). Reicht der Heap nicht, steht der OutOfMemoryError im Feld `fehler`.
+      parameters:
+        - name: mb
+          in: query
+          description: Zusätzlich belegte Megabyte.
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Größe des Lecks insgesamt.
+          content:
+            application/json:
+              example: { leckGesamtMb: 50 }
+    delete:
+      tags: [Szenario JVM]
+      summary: Heap-Leck freigeben
+      responses:
+        "200":
+          description: Freigegebene Megabyte.
+          content:
+            application/json:
+              example: { freigegebenMb: 50 }
+
+  /szenario/jvm/muell:
+    get:
+      tags: [Szenario JVM]
+      summary: "S19 – kurzlebigen Müll erzeugen"
+      description: |
+        Belegt `kb` Kilobyte und gibt sie mit dem Ende der Anfrage wieder frei.
+
+        **Wirkung:** Harmlos, solange der Heap Luft hat. Bei fast vollem Heap (nach
+        `POST /szenario/jvm/leck`) treibt der Müll die Garbage Collection an – der
+        GC-Zeitanteil steigt, die Antwortzeiten aller Anfragen mit.
+      parameters:
+        - name: kb
+          in: query
+          description: Größe des Mülls je Anfrage in Kilobyte (1–65536).
+          schema: { type: integer, default: 512, minimum: 1, maximum: 65536 }
+      responses:
+        "200": { $ref: "#/components/responses/MitDauer" }
+
+  /szenario/jvm/dateien:
+    post:
+      tags: [Szenario JVM]
+      summary: "S10 – Dateien öffnen und offen lassen"
+      description: |
+        Öffnet `anzahl` Dateien und schließt sie nicht – jede belegt einen File Descriptor.
+
+        **Wirkung:** Nähert sich der Prozess seiner Grenze (`ulimit -n`), scheitern neue
+        Verbindungen und Dateizugriffe mit „Too many open files“. Die Werte stehen in
+        `GET /diagnose/uebersicht` unter `jvm`.
+      parameters:
+        - name: anzahl
+          in: query
+          description: Zusätzlich geöffnete Dateien.
+          schema: { type: integer, default: 500 }
+      responses:
+        "200":
+          description: Offene Dateien dieses Szenarios insgesamt.
+          content:
+            application/json:
+              example: { offeneDateien: 500 }
+    delete:
+      tags: [Szenario JVM]
+      summary: Geöffnete Dateien schließen
+      responses:
+        "200":
+          description: Anzahl geschlossener Dateien.
+          content:
+            application/json:
+              example: { geschlossen: 500 }
+
+  /szenario/jvm/offheap:
+    post:
+      tags: [Szenario JVM]
+      summary: "S14 – Speicher außerhalb des Heaps belegen (Direct Buffer)"
+      description: |
+        Belegt `mb` Megabyte als Direct Buffer.
+
+        **Wirkung:** JMX sieht diesen Speicher (BufferPool `direct`), `-Xmx` begrenzt ihn
+        nicht – er zählt aber gegen das Container-Limit. So kann ein Container an seine
+        Grenze stoßen, obwohl der Heap fast leer ist.
+      parameters:
+        - name: mb
+          in: query
+          description: Zusätzlich belegte Megabyte.
+          schema: { type: integer, default: 50, minimum: 0 }
+      responses:
+        "200":
+          description: Belegter Speicher außerhalb des Heaps insgesamt; bei Erschöpfung zusätzlich `fehler`.
+          content:
+            application/json:
+              example: { offHeapGesamtMb: 50 }
+    delete:
+      tags: [Szenario JVM]
+      summary: Direct Buffer freigeben
+      description: Gibt die Puffer frei und stößt eine Garbage Collection an – erst sie gibt den Speicher wirklich zurück.
+      responses:
+        "200":
+          description: Freigegebene Megabyte.
+          content:
+            application/json:
+              example: { freigegebenMb: 50 }
+
+  /szenario/jvm/threads:
+    post:
+      tags: [Szenario JVM]
+      summary: "S14 – zusätzliche Threads starten"
+      description: |
+        Startet `anzahl` schlafende Threads (`mes-zusatz-…`), die ihren Stack bis etwa
+        `stackKb` belegen und nach `sekunden` von selbst enden.
+
+        **Wirkung:** Jeder Thread kostet Speicher außerhalb des Heaps. Dieser Speicher ist
+        **nur von außen** sichtbar (Container-Sicht in cAdvisor, Native Memory Tracking),
+        nicht in JMX – dort steigt lediglich die Thread-Zahl.
+      parameters:
+        - name: anzahl
+          in: query
+          description: Anzahl zusätzlicher Threads.
+          schema: { type: integer, default: 100, minimum: 0 }
+        - name: stackKb
+          in: query
+          description: Ungefähr belegter Stack je Thread in Kilobyte (1–768).
+          schema: { type: integer, default: 256, minimum: 1, maximum: 768 }
+        - name: sekunden
+          in: query
+          description: Lebensdauer der Threads.
+          schema: { type: integer, default: 600, minimum: 1 }
+      responses:
+        "200":
+          description: Gestartete Threads; bei Erschöpfung zusätzlich `fehler`.
+          content:
+            application/json:
+              example: { gestartet: 100, zusaetzlicheThreads: 100, stapeltiefe: 2048 }
+    delete:
+      tags: [Szenario JVM]
+      summary: Zusätzliche Threads beenden
+      responses:
+        "200":
+          description: Anzahl beendeter Threads.
+          content:
+            application/json:
+              example: { beendet: 100 }
+
+  # ══════════════════════ Szenario Messaging ══════════════════════
+  /szenario/jms/senden:
+    post:
+      tags: [Szenario Messaging]
+      summary: "S12 – Nachrichten in die Queue senden"
+      description: |
+        Sendet `anzahl` Nachrichten an die Queue `MES.EINGANG` des ActiveMQ-Brokers. Eine
+        Message Driven Bean verarbeitet sie.
+
+        * `art=langsam` – die Verarbeitung jeder Nachricht dauert `ms` Millisekunden.
+        * `art=buchung` – die Verarbeitung bucht auf eine zufällige Baugruppe und hängt
+          deshalb bei einer Tabellensperre (S01).
+
+        `gift` ist der Anteil in Prozent, dessen Verarbeitung **immer** scheitert: Diese
+        Nachrichten werden wiederholt zugestellt und landen schließlich in der Dead Letter
+        Queue `ActiveMQ.DLQ`.
+
+        **Wirkung:** Kommen Nachrichten schneller, als die MDB sie verarbeitet, wächst die
+        Queue. Sichtbar in der ActiveMQ-Konsole (`/admin/`) und in `GET /szenario/jms`.
+      parameters:
+        - name: anzahl
+          in: query
+          description: Anzahl Nachrichten.
+          schema: { type: integer, default: 10, minimum: 0 }
+        - name: art
+          in: query
+          description: Was die Verarbeitung tut, siehe oben.
+          schema: { type: string, enum: [langsam, buchung], default: langsam }
+        - name: ms
+          in: query
+          description: Verarbeitungsdauer je Nachricht in Millisekunden (nur `art=langsam`).
+          schema: { type: integer, format: int64, default: 1000, minimum: 0 }
+        - name: gift
+          in: query
+          description: Anteil der Nachrichten in Prozent, deren Verarbeitung immer scheitert (0–100).
+          schema: { type: integer, default: 0, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: Gesendete Nachrichten.
+          content:
+            application/json:
+              example: { gesendet: 10, davonGift: 0, gesendetGesamt: 10 }
+        "400": { $ref: "#/components/responses/Eingabe" }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /szenario/jms:
+    get:
+      tags: [Szenario Messaging]
+      summary: "S12 – Zustand der Nachrichtenverarbeitung"
+      description: |
+        Gesendete Nachrichten insgesamt und je Message Driven Bean: gerade aktive
+        Verarbeitungen, verarbeitete und gescheiterte Nachrichten, Wiederholungen und die
+        Wartezeit der zuletzt verarbeiteten Nachricht in der Queue.
+      responses:
+        "200":
+          description: Zustand.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    delete:
+      tags: [Szenario Messaging]
+      summary: Rückstand abbauen
+      description: |
+        Liest die Queue `MES.EINGANG` und die Dead Letter Queue leer; noch zugestellte
+        Nachrichten werden sofort bestätigt statt verarbeitet. Dauert bis zu 20 s je Queue.
+      responses:
+        "200":
+          description: Anzahl gelesener Nachrichten je Queue (`-1` = Queue nicht erreichbar).
+          content:
+            application/json:
+              example: { MES.EINGANG: 120, ActiveMQ.DLQ: 4 }
+
+  # ═══════════════════════ Szenario Betrieb ═══════════════════════
+  /szenario/wartung:
+    post:
+      tags: [Szenario Betrieb]
+      summary: "S13 – Server in den Wartungsmodus setzen"
+      description: |
+        Ab jetzt antwortet der Health-Check `GET /status` dieses Servers mit `503`.
+
+        **Wirkung:** Der HAProxy nimmt den Server nach drei Fehlversuchen aus der Verteilung,
+        laufende Anfragen laufen zu Ende. Die übrigen Server tragen die ganze Last (N−1).
+        Sinnvoll nur **direkt** an einem Server – über den HAProxy ist nicht bestimmt, welcher
+        Server die Anfrage bekommt.
+      responses:
+        "200":
+          description: Wartungsmodus an.
+          content:
+            application/json:
+              example: { wartung: true, rolle: core, hinweis: "Health-Check /mes/api/status antwortet jetzt 503 – HAProxy nimmt den Server heraus" }
+    delete:
+      tags: [Szenario Betrieb]
+      summary: Wartungsmodus beenden
+      description: Der Health-Check antwortet wieder mit `200`; der HAProxy nimmt den Server nach zwei erfolgreichen Prüfungen wieder auf.
+      responses:
+        "200":
+          description: Wartungsmodus aus.
+          content:
+            application/json:
+              example: { wartung: false, rolle: core }
+
+  /szenario/log:
+    post:
+      tags: [Szenario Betrieb]
+      summary: "S17 – Verhalten des Log-Sammlers einstellen"
+      description: |
+        Stellt ein, wie die Queue hinter `POST /log` mit einer Log-Flut umgeht:
+
+        * `unbegrenzt` – nimmt alles an, der Rückstand wächst im Heap (vermutlich der Stand
+          beim Kunden).
+        * `verwerfen` – begrenzt auf `kapazitaet`; bei voller Queue geht der Eintrag verloren
+          und wird gezählt, der Aufrufer bekommt `503`.
+        * `blockieren` – begrenzt auf `kapazitaet`; der Aufrufer wartet auf einen Platz und
+          hält so lange seinen HTTP-Thread.
+
+        `schreibLimit` bremst den Schreiber und simuliert eine langsame Platte oder einen
+        gebremsten Log-Agenten.
+      parameters:
+        - name: modus
+          in: query
+          description: Verhalten bei voller Queue, siehe oben.
+          schema: { type: string, enum: [unbegrenzt, verwerfen, blockieren], default: unbegrenzt }
+        - name: kapazitaet
+          in: query
+          description: Größe der Queue (in den Modi `verwerfen` und `blockieren`).
+          schema: { type: integer, default: 10000 }
+        - name: schreibLimit
+          in: query
+          description: Zeilen pro Sekunde, die der Schreiber schafft; `0` = ohne Grenze.
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Zustand nach der Änderung.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogZustand" }
+        "400": { $ref: "#/components/responses/Eingabe" }
+    get:
+      tags: [Szenario Betrieb]
+      summary: "S17 – Zustand des Log-Sammlers"
+      description: Füllstand der Queue, Alter des ältesten Eintrags, wartende Aufrufer und die Zähler für angenommene, geschriebene und verworfene Einträge.
+      responses:
+        "200":
+          description: Zustand.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogZustand" }
+    delete:
+      tags: [Szenario Betrieb]
+      summary: Log-Sammler zurücksetzen
+      description: Zurück auf `unbegrenzt`, Kapazität 10000, ohne Schreibgrenze. Der Rückstand wird verworfen.
+      responses:
+        "200":
+          description: Zustand nach dem Zurücksetzen, zusätzlich `verworfenerRueckstand`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogZustand" }
+
+  /szenario/alle:
+    delete:
+      tags: [Szenario Betrieb]
+      summary: Alle Störungen dieses Servers aufräumen
+      description: |
+        Gibt Sperren frei, räumt Heap-Leck, Dateien, Direct Buffer und Zusatz-Threads auf,
+        schließt geleckte Connections, hebt die Sitzungsgrenze auf, stoppt den Langläufer,
+        beendet den Wartungsmodus, setzt den Log-Sammler zurück und leert die Queues.
+
+        Belegte Timer-, Executor- und Bean-Pools laufen von selbst aus. Gilt nur für **diesen**
+        Server – nach einem Szenario über mehrere Server jeden einzeln aufräumen (das
+        Szenario `reset` der Laststeuerung tut genau das).
+      responses:
+        "200":
+          description: Was aufgeräumt wurde.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  # ═══════════════════════════ Diagnose ═══════════════════════════
+  /diagnose/uebersicht:
+    get:
+      tags: [Diagnose]
+      summary: Ampel über alle Ebenen der Kausalkette
+      description: |
+        Der schnellste Überblick, **wo** es eng ist – von außen nach innen:
+
+        `http` und `httpExecutor` (Tomcat-Threads), `jdbcPool` und `jdbcAnwendungssicht`
+        (Connections), `beanPools`, `executoren`, `scheduler`, `transaktionen` (aktive und
+        die älteste), `mdb`, `logSammler`, `wartung`, `fehler` (Zähler nach Ursache),
+        `szenario` (gerade aktive Störungen) und `jvm` (Heap, Threads, Direct Buffer,
+        Container-Belegung, File Descriptors).
+
+        Die Schlüssel der Einträge sind JMX-ObjectNames – dieselben, die JConsole und der
+        JMX Exporter zeigen.
+      responses:
+        "200":
+          description: Übersicht.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /diagnose/db-sperren:
+    get:
+      tags: [Diagnose]
+      summary: Sperren aus Sicht der Datenbank
+      description: |
+        Fragt Oracle als User `MES_MONITOR` ab: `blockierketten` (wer wartet auf wen, aus
+        `V$SESSION.BLOCKING_SESSION`) und `gesperrteObjekte` (aus `V$LOCKED_OBJECT`). Zeigt
+        auch Sperren, die nicht von dieser Anwendung stammen – etwa die der Replikation.
+      responses:
+        "200":
+          description: Blockierketten und gesperrte Objekte.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "503": { $ref: "#/components/responses/Engpass" }
+
+  /diagnose/threads:
+    get:
+      tags: [Diagnose]
+      summary: Threads nach Zustand und Namensgruppe
+      description: |
+        Der schnellste Weg zu „wer hängt woran?“: zählt alle Threads nach Zustand
+        (`RUNNABLE`, `WAITING`, `TIMED_WAITING`, `BLOCKED`) und nach Namensgruppe (Name ohne
+        laufende Nummer, z. B. `http-nio-8080-exec`).
+
+        Mit `gruppe` kommen zusätzlich bis zu 20 Threads im Detail: worauf sie warten und
+        ihr Stack.
+      parameters:
+        - name: gruppe
+          in: query
+          description: Teil des Thread-Namens, für den Details geliefert werden.
+          schema: { type: string }
+          example: http-nio-8080-exec
+        - name: stack
+          in: query
+          description: Tiefe des Stacks in den Details.
+          schema: { type: integer, default: 8 }
+      responses:
+        "200":
+          description: Thread-Zahlen, mit `gruppe` zusätzlich `details`.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /diagnose/mbeans:
+    get:
+      tags: [Diagnose]
+      summary: MBean-Inventur
+      description: |
+        Listet die ObjectNames, die zu `muster` passen. Mit `attribute=true` kommen alle
+        lesbaren Attribute samt Wert dazu – praktisch, um herauszufinden, welche Metrik es
+        gibt, bevor man sie in den JMX Exporter aufnimmt.
+
+        **Vorsicht:** `*:*` mit `attribute=true` liest sämtliche MBeans des Servers und
+        dauert entsprechend.
+      parameters:
+        - name: muster
+          in: query
+          description: ObjectName-Muster.
+          schema: { type: string, default: "*:*" }
+          example: "Catalina:type=ThreadPool,*"
+        - name: attribute
+          in: query
+          description: Attribute und Werte mitliefern.
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: ObjectNames, optional mit Attributen.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "500": { $ref: "#/components/responses/Fehler" }
+
+  /diagnose/konfig:
+    get:
+      tags: [Diagnose]
+      summary: Wirksame Konfiguration des Servers
+      description: |
+        Was **tatsächlich** gilt, nicht was in der Datei steht: Rolle und
+        Konfigurationsvariante, JVM-Argumente, Java-Version, Prozessoren, Heap-Maximum und
+        Container-Limit, Größe des Timer-Pools, der effektive Transaction Timeout, die
+        Einstellungen der DataSources, Bean-Pools und HTTP-Connectoren.
+
+        Gut zum Vergleichen der Varianten `kunde` und `optimiert`.
+      responses:
+        "200":
+          description: Konfiguration.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+components:
+  parameters:
+    BaugruppeId:
+      name: id
+      in: path
+      required: true
+      description: ID der Baugruppe. Die Demo-Daten enthalten die IDs 1 bis 10000.
+      schema: { type: integer, format: int64 }
+      example: 4711
+    Station:
+      name: station
+      in: query
+      description: Kennung der Station, von der die Anfrage kommt.
+      schema: { type: string, default: STATION-1 }
+    Warten:
+      name: warten
+      in: query
+      description: |
+        Sekunden, die auf eine Zeilensperre gewartet wird (`FOR UPDATE WAIT n`).
+        **Weglassen = unbegrenzt warten** – das Verhalten beim Kunden.
+      schema: { type: integer, minimum: 0 }
+    AbfrageTimeout:
+      name: abfrageTimeout
+      in: query
+      description: Statement-Timeout in Sekunden (`Statement.setQueryTimeout`). Weglassen = keiner.
+      schema: { type: integer, minimum: 0 }
+    DataSource:
+      name: datasource
+      in: query
+      description: Welche DataSource aus der `tomee.xml` benutzt wird – lokale DB oder Master-DB.
+      schema: { type: string, enum: [MES_Connection, Master_MES_Connection], default: MES_Connection }
+    Ms:
+      name: ms
+      in: query
+      description: Dauer in Millisekunden.
+      schema: { type: integer, format: int64, default: 5000 }
+
+  responses:
+    MitDauer:
+      description: Fertig; `dauerMs` ist die im Server gemessene Dauer.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              ergebnis: { type: string, example: "5000" }
+              dauerMs: { type: integer, format: int64, example: 5003 }
+    Eingabe:
+      description: Ungültiger Parameter (`fehler` = `EINGABE`), die Meldung nennt die erlaubten Werte.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Fehler" }
+          example: { fehler: EINGABE, meldung: "Tabelle muss eine von [BAUGRUPPE, BUCHUNG, STAMMDATEN] sein" }
+    Engpass:
+      description: |
+        Eine Ressource ist erschöpft oder eine Wartezeit abgelaufen. `fehler` nennt die
+        Ursache: `POOL_ERSCHOEPFT`, `BEAN_POOL_TIMEOUT`, `SINGLETON_TIMEOUT`, `SPERR_TIMEOUT`,
+        `ABFRAGE_TIMEOUT`, `EXECUTOR_ABGELEHNT` oder `DB_SITZUNGSLIMIT`. Eine abgebrochene
+        Transaktion (`TRANSAKTION_ABGEBROCHEN`) kommt als `409`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Fehler" }
+          example: { fehler: POOL_ERSCHOEPFT, meldung: "SQLException: …" }
+    Fehler:
+      description: Sonstiger Fehler (`fehler` = `SONSTIGE` oder `CLIENT_ABBRUCH`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Fehler" }
+
+  schemas:
+    Status:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, wartung] }
+        rolle: { type: string, enum: [core, fileprocessing, singleton, facade], description: Rolle des Servers (Umgebungsvariable MES_ROLLE). }
+        konfig: { type: string, description: "Konfigurationsvariante: kunde oder optimiert.", example: kunde }
+    Baugruppe:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 4711 }
+        seriennummer: { type: string, example: SN-00004711 }
+        artikel: { type: string, example: ART-111 }
+        status: { type: string, enum: [SMT, AOI, PRUEFUNG, FERTIG], example: PRUEFUNG }
+        station: { type: string, example: STATION-7 }
+        buchungen: { type: integer, format: int64, description: Anzahl der Buchungen auf diese Baugruppe., example: 12 }
+        geaendert: { type: string, description: Zeitpunkt der letzten Änderung., example: "2026-10-06 15:20:11.123" }
+    Buchung:
+      type: object
+      properties:
+        id: { type: integer, format: int64, example: 4711 }
+        buchungen: { type: integer, format: int64, description: Zählerstand nach dieser Buchung., example: 12 }
+        station: { type: string, example: STATION-1 }
+    LogZustand:
+      type: object
+      properties:
+        modus: { type: string, enum: [unbegrenzt, verwerfen, blockieren] }
+        queue: { type: integer, description: Einträge, die noch auf das Schreiben warten. }
+        kapazitaet: { type: integer }
+        schreibLimitProSekunde: { type: integer }
+        aeltesterEintragSekunden: { type: number, description: Wie lange der älteste Eintrag schon wartet. }
+        wartendeAufrufer: { type: integer, description: Aufrufer, die im Modus blockieren auf einen Platz warten. }
+        angenommen: { type: integer, format: int64 }
+        geschrieben: { type: integer, format: int64 }
+        verworfen: { type: integer, format: int64 }
+    Fehler:
+      type: object
+      properties:
+        fehler:
+          type: string
+          description: Art des Fehlers – dieselben Namen wie im JMX-Zähler `type=Fehler`.
+          enum: [EINGABE, POOL_ERSCHOEPFT, BEAN_POOL_TIMEOUT, SINGLETON_TIMEOUT, SPERR_TIMEOUT, ABFRAGE_TIMEOUT, TRANSAKTION_ABGEBROCHEN, EXECUTOR_ABGELEHNT, CLIENT_ABBRUCH, DB_SITZUNGSLIMIT, SONSTIGE]
+        meldung: { type: string, description: Klasse und Text der ursächlichen Ausnahme. }
