@@ -163,7 +163,7 @@ Oracle. Teilnehmer ohne SSH-Zugang erreicht man so allerdings nicht.
 |---|---|---|---|
 | Übersichtsseite mit allen Links | `/` | – | – |
 | Laststeuerung (Szenarien starten) | `/frontend/` | `:8070` | – |
-| Grafana | `/grafana/` | `:3000` (leitet auf `/grafana/` weiter) | admin / admin |
+| Grafana | `/grafana/` | `:3000` | admin / admin |
 | Prometheus (Alarme: `/alerts`) | `/prometheus/` | `:9090` | – |
 | HAProxy-Statistik | `/haproxy` | `:8989` | – |
 | cAdvisor | `/cadvisor/` | `:8085/cadvisor/` | – |
@@ -185,21 +185,22 @@ was der Dienst mit Pfaden macht:
 
 | Art | Wie | Wer |
 |---|---|---|
-| Präfix abschneiden | `proxy_pass http://ziel:port/;` (mit `/` am Ende) | Applikationsserver, Laststeuerung, Prometheus |
-| Präfix durchreichen | `proxy_pass http://ziel:port;` (ohne `/`) – der Dienst muss selbst unter dem Unterpfad ausliefern | Grafana (`GF_SERVER_SERVE_FROM_SUB_PATH`), cAdvisor (`--url_base_prefix`), HAProxy (zweiter Listener `:8990` mit `stats uri /haproxy`) |
+| Präfix abschneiden | `proxy_pass http://ziel:port/;` (mit `/` am Ende) | Applikationsserver, Laststeuerung, Prometheus, Grafana |
+| Präfix durchreichen | `proxy_pass http://ziel:port;` (ohne `/`) – der Dienst muss selbst unter dem Unterpfad ausliefern | cAdvisor (`--url_base_prefix`), HAProxy (zweiter Listener `:8990` mit `stats uri /haproxy`), Alertmanager, ActiveMQ-Konsole |
 | Name erst zur Laufzeit auflösen | `resolver 127.0.0.11` + Variable im `proxy_pass` | Facade – der Container läuft meist gar nicht, sonst startet nginx nicht |
 
-**Hinter einem weiteren Reverse Proxy** (`https://<host>/<pfad>/` → `:8080/`, der Proxy
-schneidet `<pfad>` ab): `PORTAL_PFAD=/<pfad>` in `.env` setzen und die Container neu
-anlegen (`./start.sh` bzw. `docker compose up -d`). Ohne die Einstellung verlieren
-Weiterleitungen und die Dienste mit absoluten Pfaden (Grafana, cAdvisor,
-HAProxy-Statistik, ActiveMQ-Konsole) den Unterpfad, und der äußere Proxy antwortet
-mit 404. `portal/nginx.conf` ist dafür eine Vorlage, in die der nginx-Container
-`${PORTAL_PFAD}` beim Start einsetzt.
-
 Prometheus braucht dafür keine Einstellung: seine Oberfläche ermittelt das Präfix
-aus der Adresse im Browser. Grafana dagegen liefert fest unter `/grafana/` aus;
-der Aufruf von `:3000` leitet deshalb dorthin weiter.
+aus der Adresse im Browser. Grafana kann das nicht; das Portal gibt seiner
+Oberfläche den Pfad deshalb beim Laden mit (Skript in `portal/nginx.conf`).
+Grafana selbst läuft ohne Unterpfad und ist unter `:3000` unverändert erreichbar.
+
+**Hinter einem weiteren Reverse Proxy** (`https://<host>/<pfad>/` → `:8080/`, der Proxy
+schneidet `<pfad>` ab) ist nichts einzustellen, auch wenn sich `<pfad>` ändert: Das
+Portal gibt nirgends einen absoluten Pfad aus. Eigene Weiterleitungen sind relativ
+(`grafana/` statt `/grafana/`), absolute Pfade der Dienste schreibt nginx relativ
+um (`$zur_wurzel`), und Grafana ermittelt seinen Pfad im Browser. Wer einen Dienst
+ergänzt, hält sich daran – ein einziges `return 301 /…` oder ein Dienst mit
+absoluten Links führt hinter dem Proxy zu 404.
 
 ---
 
@@ -367,5 +368,4 @@ Szenarien in `lasttest/mes_last.py`.
 | Laststeuerung: S09 ohne Container-Zustand | der Container hat bewusst keinen Docker-Zugriff; `docker inspect mes-facade` auf der VM |
 | Portal startet nicht (`host not found in upstream`) | ein Zielcontainer fehlt; `docker compose up -d` und danach `docker compose up -d portal` |
 | `:8085` (cAdvisor) zeigt 404 | cAdvisor liegt wegen des Portals unter `/cadvisor/`: `http://<host>:8085/cadvisor/` |
-| `:3000` landet auf `:8080/grafana/` | gewollt – Grafana liefert unter dem Unterpfad aus und leitet dorthin weiter. Landet die Weiterleitung auf `localhost:8080`, wurde Grafana ohne bekannte Adresse gestartet (`docker compose up` statt `./start.sh`): `./start.sh` setzt `GF_SERVER_DOMAIN` aus `REMOTE_HOST` |
 | Oracle startet langsam | erster Start eines neuen Containers ca. 30–60 s |
